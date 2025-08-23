@@ -1,0 +1,30 @@
+[package]
+name = "index-api"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+
+sqlx = { version = "0.8.6", features = [
+    "postgres",
+    "runtime-tokio-rustls",
+    "rust_decimal",
+    "chrono",
+] }
+rust_decimal = { version = "1.37.2", features = ["serde-with-str", "macros"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1" }
+dotenv = "0.15.0"
+solana-signature = { version = "2.2.1", features = ["serde"] }
+spl-token = "8.0.0"
+chrono = { version = "0.4", features = ["serde"] }
+bs58 = "0.5.1"
+hex = "0.4.3"
+futures-util = { version = "0.3.1", default-features = false }
+tokio = { version = "1.20.0", features = ["rt-multi-thread", "macros", "time"] }
+axum = "0.8.4"
+tracing = "0.1.41"
+tracing-subscriber = "0.3.19"
+socketioxide = "0.17.2"
+tower = "0.5.2"
+tower-http = { version = "0.6.6", features = ["cors"] }
