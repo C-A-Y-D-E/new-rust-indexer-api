@@ -17,6 +17,7 @@ use crate::{
         filter::{PulseFilter, PulseTable},
         pulse::{DevWalletFunding, PulseDataResponse},
     },
+    utils::{calculate_market_cap, calculate_percentage},
 };
 
 pub async fn pulse(
@@ -187,15 +188,14 @@ WITH all_pools AS (
           
               -- token meta
               t.name, t.symbol, t.image, t.decimals, t.website, t.twitter, t.telegram, t.mint_address,
-              t.token_supply,
+              t.token_supply,t.scale_factor,
           
               -- liquidity/price (fallback to initial if no swaps yet)
               coalesce(ls.latest_quote_reserve, r.initial_token_quote_reserve) AS liquidity_sol,
               coalesce(ls.latest_base_reserve,  r.initial_token_base_reserve)  AS liquidity_token,
               coalesce(ls.latest_price_sol, 0)                                 AS current_price_sol,
           
-              -- market cap
-              CAST((coalesce(ls.latest_price_sol, 0) * t.token_supply) AS NUMERIC(38,18)) AS market_cap_sol,
+             
           
               -- 24h volume & activity
               coalesce(v.volume_sol, 0)                                        AS volume_sol,
@@ -206,19 +206,10 @@ WITH all_pools AS (
               -- holders
               coalesce(h.num_holders, 0)                                       AS num_holders,
           
-              -- top-10 holders % and dev %
-              coalesce(
-                ((coalesce(th.top10_amount_raw,0) / nullif(t.scale_factor,0)) * 100.0)
-                 / nullif(t.token_supply,0), 0
-              ) AS top10_holders_percent,
-              coalesce(
-                ((coalesce(d.dev_amount_raw,0) / nullif(t.scale_factor,0)) * 100.0)
-                 / nullif(t.token_supply,0), 0
-              ) AS dev_holds_percent,
-                coalesce(
-                 (coalesce(sh.snipers_amount_raw,0) * 100.0)
-                  / nullif(t.token_supply,0), 0
-               ) AS snipers_holding_percent,
+               -- raw amounts for calculation in Rust
+                coalesce(th.top10_amount_raw, 0)                                 AS top10_amount_raw,
+                coalesce(d.dev_amount_raw, 0)                                    AS dev_amount_raw,
+                coalesce(sh.snipers_amount_raw, 0)                               AS snipers_amount_raw,
           
               -- migrations
               coalesce(m.migration_count, 0)                                   AS migration_count,
@@ -442,6 +433,25 @@ WITH all_pools AS (
 
             let mut data = Vec::new();
             for pool in pools.into_iter() {
+                let top10_holders_percent = calculate_percentage(
+                    pool.get::<Decimal, _>("top10_amount_raw"),
+                    pool.get::<Decimal, _>("scale_factor"),
+                    pool.get::<Decimal, _>("token_supply"),
+                );
+                let dev_holds_percent = calculate_percentage(
+                    pool.get::<Decimal, _>("dev_amount_raw"),
+                    pool.get::<Decimal, _>("scale_factor"),
+                    pool.get::<Decimal, _>("token_supply"),
+                );
+                let snipers_holds_percent = calculate_percentage(
+                    pool.get::<Decimal, _>("snipers_amount_raw"),
+                    pool.get::<Decimal, _>("scale_factor"),
+                    pool.get::<Decimal, _>("token_supply"),
+                );
+                let market_cap_sol = calculate_market_cap(
+                    pool.get::<Decimal, _>("current_price_sol"),
+                    pool.get::<Decimal, _>("token_supply"),
+                );
                 let pulse_data: PulseDataResponse = PulseDataResponse {
                     pair_address: bs58::encode(pool.get::<Vec<u8>, _>("pool_address"))
                         .into_string(),
@@ -459,11 +469,11 @@ WITH all_pools AS (
                     twitter: pool.get("twitter"),
                     telegram: pool.get("telegram"),
                     // discord: pool.get("discord"),
-                    top10_holders_percent: pool.get::<Decimal, _>("top10_holders_percent"),
-                    dev_holds_percent: pool.get::<Decimal, _>("dev_holds_percent"),
-                    snipers_holds_percent: pool.get::<Decimal, _>("snipers_holding_percent"),
+                    top10_holders_percent: top10_holders_percent,
+                    dev_holds_percent: dev_holds_percent,
+                    snipers_holds_percent: snipers_holds_percent,
                     volume_sol: pool.get::<Decimal, _>("volume_sol"),
-                    market_cap_sol: pool.get::<Decimal, _>("market_cap_sol"),
+                    market_cap_sol: market_cap_sol,
                     created_at: pool.get::<DateTime<Utc>, _>("created_at"),
                     migration_count: pool.get("migration_count"),
                     num_txns: pool.get("num_txns"),
@@ -652,15 +662,14 @@ WITH all_pools AS (
           
               -- token meta
               t.name, t.symbol, t.image, t.decimals, t.website, t.twitter, t.telegram, t.mint_address,
-              t.token_supply,
+              t.token_supply,t.scale_factor,
           
               -- liquidity/price (fallback to initial if no swaps yet)
               coalesce(ls.latest_quote_reserve, r.initial_token_quote_reserve) AS liquidity_sol,
               coalesce(ls.latest_base_reserve,  r.initial_token_base_reserve)  AS liquidity_token,
               coalesce(ls.latest_price_sol, 0)                                 AS current_price_sol,
           
-              -- market cap
-              CAST((coalesce(ls.latest_price_sol, 0) * t.token_supply) AS NUMERIC(38,18)) AS market_cap_sol,
+             
           
               -- 24h volume & activity
               coalesce(v.volume_sol, 0)                                        AS volume_sol,
@@ -671,19 +680,10 @@ WITH all_pools AS (
               -- holders
               coalesce(h.num_holders, 0)                                       AS num_holders,
           
-              -- top-10 holders % and dev %
-              coalesce(
-                ((coalesce(th.top10_amount_raw,0) / nullif(t.scale_factor,0)) * 100.0)
-                 / nullif(t.token_supply,0), 0
-              ) AS top10_holders_percent,
-              coalesce(
-                ((coalesce(d.dev_amount_raw,0) / nullif(t.scale_factor,0)) * 100.0)
-                 / nullif(t.token_supply,0), 0
-              ) AS dev_holds_percent,
-                coalesce(
-                 (coalesce(sh.snipers_amount_raw,0) * 100.0)
-                  / nullif(t.token_supply,0), 0
-               ) AS snipers_holding_percent,
+               -- raw amounts for calculation in Rust
+                coalesce(th.top10_amount_raw, 0)                                 AS top10_amount_raw,
+                coalesce(d.dev_amount_raw, 0)                                    AS dev_amount_raw,
+                coalesce(sh.snipers_amount_raw, 0)                               AS snipers_amount_raw,
           
               -- migrations
               coalesce(m.migration_count, 0)                                   AS migration_count,
@@ -907,6 +907,25 @@ WITH all_pools AS (
 
             let mut data = Vec::new();
             for pool in pools.into_iter() {
+                let top10_holders_percent = calculate_percentage(
+                    pool.get::<Decimal, _>("top10_amount_raw"),
+                    pool.get::<Decimal, _>("scale_factor"),
+                    pool.get::<Decimal, _>("token_supply"),
+                );
+                let dev_holds_percent = calculate_percentage(
+                    pool.get::<Decimal, _>("dev_amount_raw"),
+                    pool.get::<Decimal, _>("scale_factor"),
+                    pool.get::<Decimal, _>("token_supply"),
+                );
+                let snipers_holds_percent = calculate_percentage(
+                    pool.get::<Decimal, _>("snipers_amount_raw"),
+                    pool.get::<Decimal, _>("scale_factor"),
+                    pool.get::<Decimal, _>("token_supply"),
+                );
+                let market_cap_sol = calculate_market_cap(
+                    pool.get::<Decimal, _>("current_price_sol"),
+                    pool.get::<Decimal, _>("token_supply"),
+                );
                 let pulse_data: PulseDataResponse = PulseDataResponse {
                     pair_address: bs58::encode(pool.get::<Vec<u8>, _>("pool_address"))
                         .into_string(),
@@ -924,11 +943,11 @@ WITH all_pools AS (
                     twitter: pool.get("twitter"),
                     telegram: pool.get("telegram"),
                     // discord: pool.get("discord"),
-                    top10_holders_percent: pool.get::<Decimal, _>("top10_holders_percent"),
-                    dev_holds_percent: pool.get::<Decimal, _>("dev_holds_percent"),
-                    snipers_holds_percent: pool.get::<Decimal, _>("snipers_holding_percent"),
+                    top10_holders_percent: top10_holders_percent,
+                    dev_holds_percent: dev_holds_percent,
+                    snipers_holds_percent: snipers_holds_percent,
                     volume_sol: pool.get::<Decimal, _>("volume_sol"),
-                    market_cap_sol: pool.get::<Decimal, _>("market_cap_sol"),
+                    market_cap_sol: market_cap_sol,
                     created_at: pool.get::<DateTime<Utc>, _>("created_at"),
                     migration_count: pool.get("migration_count"),
                     num_txns: pool.get("num_txns"),
@@ -1118,6 +1137,7 @@ WITH all_pools AS (
               -- token meta
               t.name, t.symbol, t.image, t.decimals, t.website, t.twitter, t.telegram, t.mint_address,
               t.token_supply,
+              t.scale_factor,
           
               -- liquidity/price (fallback to initial if no swaps yet)
               coalesce(ls.latest_quote_reserve, r.initial_token_quote_reserve) AS liquidity_sol,
@@ -1125,7 +1145,7 @@ WITH all_pools AS (
               coalesce(ls.latest_price_sol, 0)                                 AS current_price_sol,
           
               -- market cap
-              CAST((coalesce(ls.latest_price_sol, 0) * t.token_supply) AS NUMERIC(38,18)) AS market_cap_sol,
+              -- CAST((coalesce(ls.latest_price_sol, 0) * t.token_supply) AS NUMERIC(38,18)) AS market_cap_sol,
           
               -- 24h volume & activity
               coalesce(v.volume_sol, 0)                                        AS volume_sol,
@@ -1136,19 +1156,10 @@ WITH all_pools AS (
               -- holders
               coalesce(h.num_holders, 0)                                       AS num_holders,
           
-              -- top-10 holders % and dev %
-              coalesce(
-                ((coalesce(th.top10_amount_raw,0) / nullif(t.scale_factor,0)) * 100.0)
-                 / nullif(t.token_supply,0), 0
-              ) AS top10_holders_percent,
-              coalesce(
-                ((coalesce(d.dev_amount_raw,0) / nullif(t.scale_factor,0)) * 100.0)
-                 / nullif(t.token_supply,0), 0
-              ) AS dev_holds_percent,
-                coalesce(
-                 (coalesce(sh.snipers_amount_raw,0) * 100.0)
-                  / nullif(t.token_supply,0), 0
-               ) AS snipers_holding_percent,
+              -- raw amounts for calculation in Rust
+                coalesce(th.top10_amount_raw, 0)                                 AS top10_amount_raw,
+                coalesce(d.dev_amount_raw, 0)                                    AS dev_amount_raw,
+                coalesce(sh.snipers_amount_raw, 0)                               AS snipers_amount_raw,
           
               -- migrations
               coalesce(m.migration_count, 0)                                   AS migration_count,
@@ -1364,6 +1375,25 @@ WITH all_pools AS (
 
             let mut data = Vec::new();
             for pool in pools.into_iter() {
+                let top10_holders_percent = calculate_percentage(
+                    pool.get::<Decimal, _>("top10_amount_raw"),
+                    pool.get::<Decimal, _>("scale_factor"),
+                    pool.get::<Decimal, _>("token_supply"),
+                );
+                let dev_holds_percent = calculate_percentage(
+                    pool.get::<Decimal, _>("dev_amount_raw"),
+                    pool.get::<Decimal, _>("scale_factor"),
+                    pool.get::<Decimal, _>("token_supply"),
+                );
+                let snipers_holds_percent = calculate_percentage(
+                    pool.get::<Decimal, _>("snipers_amount_raw"),
+                    pool.get::<Decimal, _>("scale_factor"),
+                    pool.get::<Decimal, _>("token_supply"),
+                );
+                let market_cap_sol = calculate_market_cap(
+                    pool.get::<Decimal, _>("current_price_sol"),
+                    pool.get::<Decimal, _>("token_supply"),
+                );
                 let pulse_data: PulseDataResponse = PulseDataResponse {
                     pair_address: bs58::encode(pool.get::<Vec<u8>, _>("pool_address"))
                         .into_string(),
@@ -1381,11 +1411,11 @@ WITH all_pools AS (
                     twitter: pool.get("twitter"),
                     telegram: pool.get("telegram"),
                     // discord: pool.get("discord"),
-                    top10_holders_percent: pool.get::<Decimal, _>("top10_holders_percent"),
-                    dev_holds_percent: pool.get::<Decimal, _>("dev_holds_percent"),
-                    snipers_holds_percent: pool.get::<Decimal, _>("snipers_holding_percent"),
+                    top10_holders_percent: top10_holders_percent,
+                    dev_holds_percent: dev_holds_percent,
+                    snipers_holds_percent: snipers_holds_percent,
                     volume_sol: pool.get::<Decimal, _>("volume_sol"),
-                    market_cap_sol: pool.get::<Decimal, _>("market_cap_sol"),
+                    market_cap_sol: market_cap_sol,
                     created_at: pool.get::<DateTime<Utc>, _>("created_at"),
                     migration_count: pool.get("migration_count"),
                     num_txns: pool.get("num_txns"),

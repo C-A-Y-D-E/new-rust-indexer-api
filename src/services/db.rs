@@ -2,13 +2,14 @@ use std::env;
 
 use chrono::{DateTime, Utc};
 use futures_util::TryStreamExt;
-use rust_decimal::Decimal;
 use rust_decimal::prelude::{FromPrimitive, ToPrimitive};
+use rust_decimal::{Decimal, MathematicalOps};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use solana_signature::Signature;
 use spl_token::solana_program::pubkey::Pubkey;
 use sqlx::postgres::PgListener;
+use sqlx::prelude::FromRow;
 use sqlx::{PgPool, Row, postgres::PgPoolOptions};
 use std::pin::pin;
 use std::time::Duration;
@@ -21,6 +22,9 @@ use crate::models::swap::{DBSwap, ResponseSwap, Swap};
 use crate::models::token::ResponseToken;
 use crate::routes::pool_report::ReportType;
 use crate::types::candlestick::Interval;
+use crate::types::pulse::{DevWalletFunding, PulseDataResponse};
+use crate::types::token_info::TokenInfo;
+use crate::utils::{calculate_market_cap, calculate_percentage};
 use crate::{
     defaults::{SOL_TOKEN, USDC_TOKEN},
     models::{
@@ -127,11 +131,10 @@ pub struct PoolAndTokenData {
 }
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PairInfo {
-    pool: ResponsePool,
-    base_token: ResponseToken,
-    quote_token: QuoteTokenData,
+    pub pool: DBPool,
+    pub base_token: DBToken,
 }
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, FromRow)]
 pub struct TopTrader {
     creator: String,
     is_sniper: bool,
@@ -570,96 +573,75 @@ CASE
         }
     }
 
-    pub async fn get_pair_info(
-        &self,
-        pool_address: Vec<u8>,
-    ) -> Result<Option<PairInfo>, sqlx::Error> {
+    pub async fn get_pair_info(&self, pool_address: Vec<u8>) -> Result<PairInfo, sqlx::Error> {
         let query = r#"
         SELECT 
             pools.*, 
-            tokens.*
+            tokens.hash AS token_hash,
+            tokens.mint_address,
+            tokens.name,
+            tokens.symbol,
+            tokens.decimals,
+            tokens.uri,
+            tokens.supply,
+            tokens.slot,
+            tokens.mint_authority,
+            tokens.freeze_authority,
+            tokens.image,
+            tokens.twitter,
+            tokens.telegram,
+            tokens.website,
+            tokens.program_id
         FROM pools
         JOIN tokens ON pools.token_base_address = tokens.mint_address
         WHERE pools.pool_address = $1 OR pools.token_base_address = $1
         "#;
-        let pool = sqlx::query(query)
+        let row = sqlx::query(query)
             .bind(&pool_address)
-            .fetch_optional(&self.pool)
+            .fetch_one(&self.pool)
             .await?;
 
-        match pool {
-            Some(row) => Ok(Some(PairInfo {
-                pool: ResponsePool {
-                    pool_address: bs58::encode(&row.get::<Vec<u8>, _>("pool_address"))
-                        .into_string(),
-                    factory: row.get("factory"),
-                    pre_factory: row.get("pre_factory"),
-                    reversed: row.get("reversed"),
-                    token_base_address: bs58::encode(&row.get::<Vec<u8>, _>("token_base_address"))
-                        .into_string(),
-                    pool_base_address: bs58::encode(&row.get::<Vec<u8>, _>("pool_base_address"))
-                        .into_string(),
-                    pool_quote_address: bs58::encode(&row.get::<Vec<u8>, _>("pool_quote_address"))
-                        .into_string(),
-                    token_quote_address: bs58::encode(
-                        &row.get::<Vec<u8>, _>("token_quote_address"),
-                    )
-                    .into_string(),
-                    curve_percentage: row.get("curve_percentage"),
-                    initial_token_base_reserve: row.get("initial_token_base_reserve"),
-                    initial_token_quote_reserve: row.get("initial_token_quote_reserve"),
-                    slot: row.get("slot"),
-                    creator: bs58::encode(&row.get::<Vec<u8>, _>("creator")).into_string(),
-                    hash: bs58::encode(&row.get::<Vec<u8>, _>("hash")).into_string(),
-                    metadata: row.get("metadata"),
-                    created_at: row.get("created_at"),
-                    updated_at: row.get("updated_at"),
-                },
-                base_token: ResponseToken {
-                    mint_address: bs58::encode(&row.get::<Vec<u8>, _>("mint_address"))
-                        .into_string(),
-                    name: row.get("name"),
-                    symbol: row.get("symbol"),
-                    decimals: row.get::<i16, _>("decimals") as u8,
-                    uri: row.get("uri"),
-                    supply: row.get("supply"),
-                    slot: row.get("slot"),
-                    mint_authority: row.get("mint_authority"),
-                    freeze_authority: row.get("freeze_authority"),
-                    hash: bs58::encode(&row.get::<Vec<u8>, _>("hash")).into_string(),
-                    image: row.get("image"),
-                    twitter: row.get("twitter"),
-                    telegram: row.get("telegram"),
-                    website: row.get("website"),
-                    program_id: bs58::encode(&row.get::<Vec<u8>, _>("program_id")).into_string(),
-                },
-                quote_token: if bs58::encode(&row.get::<Vec<u8>, _>("token_quote_address"))
-                    .into_string()
-                    == SOL_TOKEN.address
-                {
-                    QuoteTokenData {
-                        address: SOL_TOKEN.address.to_string(),
-                        name: SOL_TOKEN.name.to_string(),
-                        symbol: SOL_TOKEN.symbol.to_string(),
-                        decimals: SOL_TOKEN.decimals,
-                        logo: SOL_TOKEN.logo.to_string(),
-                    }
-                } else if bs58::encode(&row.get::<Vec<u8>, _>("token_quote_address")).into_string()
-                    == USDC_TOKEN.address
-                {
-                    QuoteTokenData {
-                        address: USDC_TOKEN.address.to_string(),
-                        name: USDC_TOKEN.name.to_string(),
-                        symbol: USDC_TOKEN.symbol.to_string(),
-                        decimals: USDC_TOKEN.decimals,
-                        logo: USDC_TOKEN.logo.to_string(),
-                    }
-                } else {
-                    panic!("Quote token not found");
-                },
-            })),
-            None => Ok(None),
-        }
+        let pair_info = PairInfo {
+            pool: DBPool {
+                pool_address: row.try_get::<Vec<u8>, _>("pool_address")?,
+                pool_base_address: row.try_get::<Vec<u8>, _>("pool_base_address")?,
+                pool_quote_address: row.try_get::<Vec<u8>, _>("pool_quote_address")?,
+                token_base_address: row.try_get::<Vec<u8>, _>("pool_quote_address")?,
+                token_quote_address: row.try_get::<Vec<u8>, _>("token_quote_address")?,
+                creator: row.try_get::<Vec<u8>, _>("creator")?,
+                hash: row.try_get::<Vec<u8>, _>("hash")?,
+                initial_token_base_reserve: row
+                    .try_get::<Decimal, _>("initial_token_base_reserve")?,
+                initial_token_quote_reserve: row
+                    .try_get::<Decimal, _>("initial_token_quote_reserve")?,
+                factory: row.try_get::<String, _>("factory")?,
+                pre_factory: row.try_get::<String, _>("pre_factory")?,
+                curve_percentage: row.try_get::<Option<Decimal>, _>("curve_percentage")?,
+                created_at: row.try_get::<DateTime<Utc>, _>("created_at")?,
+                updated_at: row.try_get::<DateTime<Utc>, _>("updated_at")?,
+                reversed: row.try_get::<bool, _>("reversed")?,
+                slot: row.try_get::<i64, _>("slot")?,
+                metadata: row.try_get::<Option<Value>, _>("metadata")?,
+            },
+            base_token: DBToken {
+                mint_address: row.try_get::<Vec<u8>, _>("mint_address")?,
+                name: row.try_get("name")?,
+                symbol: row.try_get("symbol")?,
+                decimals: row.try_get::<i16, _>("decimals")?,
+                uri: row.try_get("uri")?,
+                supply: row.try_get("supply")?,
+                slot: row.try_get("slot")?,
+                mint_authority: row.try_get("mint_authority")?,
+                freeze_authority: row.try_get("freeze_authority")?,
+                hash: row.try_get::<Vec<u8>, _>("token_hash")?,
+                image: row.try_get("image")?,
+                twitter: row.try_get("twitter")?,
+                telegram: row.try_get("telegram")?,
+                website: row.try_get("website")?,
+                program_id: row.try_get::<Vec<u8>, _>("program_id")?,
+            },
+        };
+        Ok(pair_info)
     }
 
     pub async fn get_top_traders(
@@ -726,7 +708,7 @@ CASE
         JOIN tokens t ON a.mint = t.mint_address
         WHERE a.mint = $1 AND a.amount > 0
         ORDER BY normalized_amount DESC
-        LIMIT 500
+        LIMIT 50
         "#;
         let holders = sqlx::query(query).bind(&mint).fetch_all(&self.pool).await;
         match holders {
@@ -734,13 +716,15 @@ CASE
                 let mut holder_responses = Vec::new();
                 for holder in holders {
                     holder_responses.push(HolderResponse {
-                        address: bs58::encode(&holder.get::<Vec<u8>, _>("owner")).into_string(),
-                        account: bs58::encode(&holder.get::<Vec<u8>, _>("account")).into_string(),
-                        amount: Decimal::from_f64(holder.get::<f64, _>("normalized_amount"))
+                        address: bs58::encode(&holder.try_get::<Vec<u8>, _>("owner")?)
+                            .into_string(),
+                        account: bs58::encode(&holder.try_get::<Vec<u8>, _>("account")?)
+                            .into_string(),
+                        amount: Decimal::from_f64(holder.try_get::<f64, _>("normalized_amount")?)
                             .unwrap(),
                         mint: bs58::encode(&mint).into_string(),
-                        state: holder.get::<DBAccountState, _>("state"),
-                        delegated_amount: holder.get::<Decimal, _>("delegated_amount"),
+                        state: holder.try_get::<DBAccountState, _>("state")?,
+                        delegated_amount: holder.try_get::<Decimal, _>("delegated_amount")?,
                     });
                 }
                 Ok(holder_responses)
@@ -781,6 +765,7 @@ CASE
             Ok(candles) => {
                 let mut ohlcvs = Vec::new();
                 for candle in candles {
+                    println!("candle: {:?}", candle);
                     ohlcvs.push(OHLCV {
                         timestamp: candle.get("bucket_start"),
                         open: candle.get("open"),
@@ -789,7 +774,7 @@ CASE
                         close: candle.get("close"),
                         volume_base: candle.get("volume_base"),
                         volume_quote: candle.get("volume_quote"),
-                        trades: candle.get("trades"),
+                        trades: candle.get::<i64, _>("trades"),
                     });
                 }
                 Ok(ohlcvs)
@@ -799,5 +784,422 @@ CASE
                 Err(e)
             }
         }
+    }
+
+    pub async fn get_24hr_recent_pools(&self) -> Result<Vec<DBPool>, sqlx::Error> {
+        let query = r#"
+        SELECT * FROM pools
+        WHERE created_at >= NOW() - INTERVAL '24 hours'
+        ORDER BY created_at DESC
+        "#;
+        let pools = sqlx::query_as::<_, DBPool>(query)
+            .fetch_all(&self.pool)
+            .await;
+        match pools {
+            Ok(pools) => Ok(pools),
+            Err(e) => {
+                error!("Error getting 24hr recent pools: {}", e);
+                Err(e)
+            }
+        }
+    }
+    pub async fn get_batch_pool_data(
+        &self,
+        pool_addresses: &[Vec<u8>],
+    ) -> Result<Vec<PulseDataResponse>, sqlx::Error> {
+        let pool_hex_strings: Vec<String> = pool_addresses
+            .iter()
+            .map(|addr| format!("\\x{}", hex::encode(addr)))
+            .collect();
+
+        let query = r#"
+            WITH target_pools AS (
+                SELECT unnest($1::bytea[]) AS pool_address
+            ),
+            all_pools AS (
+                SELECT
+                    p.pool_address,
+                    p.creator,
+                    p.token_base_address,
+                    p.token_quote_address,
+                    p.pool_base_address,
+                    p.pool_quote_address,
+                    p.factory,
+                    p.created_at,
+                    p.initial_token_base_reserve,
+                    p.initial_token_quote_reserve,
+                    p.curve_percentage
+                FROM pools p
+                JOIN target_pools tp ON tp.pool_address = p.pool_address
+            ),
+            tok AS (
+                SELECT
+                    t.mint_address,
+                    t.name, t.symbol, t.image, t.decimals,
+                    t.website, t.twitter, t.telegram,
+                    t.supply::numeric AS token_supply,
+                    power(10::numeric, t.decimals)::numeric AS scale_factor
+                FROM tokens t
+            ),
+            latest_swap AS (
+                SELECT DISTINCT ON (s.pool_address)
+                    s.pool_address,
+                    s.base_reserve  AS latest_base_reserve,
+                    s.quote_reserve AS latest_quote_reserve,
+                    s.price_sol     AS latest_price_sol
+                FROM swaps s
+                JOIN all_pools r ON r.pool_address = s.pool_address
+                ORDER BY s.pool_address, s.created_at DESC
+            ),
+            vol_24h AS (
+                SELECT s24.pool_address,
+                    (s24.buy_volume + s24.sell_volume) AS volume_sol,
+                    s24.buy_count::int8 AS num_buys,
+                    s24.sell_count::int8 AS num_sells,
+                    (s24.buy_count + s24.sell_count)::int8 AS num_txns
+                FROM swaps_24h s24
+                JOIN all_pools r USING (pool_address)
+            ),
+            holders_base AS (
+                SELECT
+                    r.pool_address,
+                    count(DISTINCT a.owner) AS num_holders
+                FROM all_pools r
+                JOIN accounts a ON a.mint = r.token_base_address
+                WHERE a.owner NOT IN (r.pool_address, r.pool_base_address, r.pool_quote_address)
+                GROUP BY r.pool_address
+            ),
+            top10_holders AS (
+                SELECT pool_address, sum(amount) AS top10_amount_raw
+                FROM (
+                    SELECT
+                        r.pool_address,
+                        a.amount,
+                        row_number() OVER (PARTITION BY r.pool_address ORDER BY a.amount DESC) AS rn
+                    FROM all_pools r
+                    JOIN accounts a
+                        ON a.mint = r.token_base_address
+                        AND a.owner NOT IN (r.pool_address, r.pool_base_address, r.pool_quote_address)
+                ) x
+                WHERE rn <= 10
+                GROUP BY pool_address
+            ),
+            dev_hold AS (
+                SELECT
+                    r.pool_address,
+                    coalesce(max(a.amount), 0) AS dev_amount_raw
+                FROM all_pools r
+                LEFT JOIN accounts a
+                    ON a.mint  = r.token_base_address
+                    AND a.owner = r.creator
+                    AND a.owner <> r.pool_address
+                GROUP BY r.pool_address
+            ),
+            snipers_holds AS (
+                SELECT
+                    r.pool_address,
+                    coalesce(sum(s.base_amount), 0) AS snipers_amount_raw
+                FROM all_pools r
+                LEFT JOIN swaps s ON s.pool_address = r.pool_address
+                WHERE s.swap_type = 'BUY'
+                    AND s.creator NOT IN (r.pool_address, r.pool_base_address, r.pool_quote_address)
+                GROUP BY r.pool_address
+            ),
+            dev_wallet_funding AS (
+                SELECT DISTINCT ON (r.pool_address)
+                    r.pool_address,
+                    ts.source,
+                    ts.destination,
+                    ts.amount,
+                    ts.hash,
+                    ts.created_at
+                FROM all_pools r
+                LEFT JOIN transfer_sol ts ON ts.destination = r.creator
+                ORDER BY r.pool_address, ts.created_at ASC
+            ),
+            migration AS (
+                SELECT r.creator,
+                    count(*) FILTER (WHERE p2.pre_factory = 'PumpFun' AND p2.factory = 'PumpSwap') AS migration_count
+                FROM all_pools r
+                LEFT JOIN pools p2 ON p2.creator = r.creator
+                GROUP BY r.creator
+            )
+            SELECT
+                r.pool_address,
+                r.creator,
+                r.token_base_address,
+                r.token_quote_address,
+                r.factory,
+                r.created_at,
+                r.initial_token_base_reserve,
+                r.initial_token_quote_reserve,
+                coalesce(r.curve_percentage, 0) AS bonding_curve_percent,
+            
+                -- token meta
+                t.name, t.symbol, t.image, t.decimals, t.website, t.twitter, t.telegram, t.mint_address,
+                t.token_supply,
+                t.scale_factor,
+            
+                -- liquidity/price (fallback to initial if no swaps yet)
+                coalesce(ls.latest_quote_reserve, r.initial_token_quote_reserve) AS liquidity_sol,
+                coalesce(ls.latest_base_reserve,  r.initial_token_base_reserve)  AS liquidity_token,
+                coalesce(ls.latest_price_sol, 0)                                 AS current_price_sol,
+            
+                -- 24h volume & activity
+                coalesce(v.volume_sol, 0)                                        AS volume_sol,
+                coalesce(v.num_txns, 0)                                          AS num_txns,
+                coalesce(v.num_buys, 0)                                          AS num_buys,
+                coalesce(v.num_sells, 0)                                         AS num_sells,
+            
+                -- holders
+                coalesce(h.num_holders, 0)                                       AS num_holders,
+            
+                -- raw amounts for calculation in Rust
+                coalesce(th.top10_amount_raw, 0)                                 AS top10_amount_raw,
+                coalesce(d.dev_amount_raw, 0)                                    AS dev_amount_raw,
+                coalesce(sh.snipers_amount_raw, 0)                               AS snipers_amount_raw,
+            
+                -- migrations
+                coalesce(m.migration_count, 0)                                   AS migration_count,
+                
+                -- dev wallet funding (first transfer)
+                df.source as funding_wallet_address,
+                df.destination as wallet_address,
+                df.amount as amount_sol,
+                df.hash as transfer_hash,
+                df.created_at as funded_at
+    
+            FROM all_pools r
+            LEFT JOIN tok           t  ON t.mint_address = r.token_base_address
+            LEFT JOIN latest_swap   ls ON ls.pool_address = r.pool_address
+            LEFT JOIN vol_24h       v  ON v.pool_address  = r.pool_address
+            LEFT JOIN holders_base  h  ON h.pool_address  = r.pool_address
+            LEFT JOIN top10_holders th ON th.pool_address = r.pool_address
+            LEFT JOIN dev_hold      d  ON d.pool_address  = r.pool_address
+            LEFT JOIN snipers_holds sh ON sh.pool_address = r.pool_address
+            LEFT JOIN dev_wallet_funding df ON df.pool_address = r.pool_address
+            LEFT JOIN migration     m  ON m.creator       = r.creator
+        "#;
+
+        let pools = sqlx::query(query)
+            .bind(&pool_hex_strings)
+            .fetch_all(&self.pool)
+            .await?;
+
+        // let mut pool_data = Vec::new();
+        let mut data = Vec::new();
+        for pool in pools.into_iter() {
+            // Get raw values from database
+            let top10_amount_raw: Decimal = pool.try_get::<Decimal, _>("top10_amount_raw")?;
+            let dev_amount_raw: Decimal = pool.try_get::<Decimal, _>("dev_amount_raw")?;
+            let snipers_amount_raw: Decimal = pool.try_get::<Decimal, _>("snipers_amount_raw")?;
+            let scale_factor: Decimal = pool.try_get::<Decimal, _>("scale_factor")?;
+            let token_supply: Decimal = pool.try_get::<Decimal, _>("token_supply")?;
+            let current_price: Decimal = pool.try_get::<Decimal, _>("current_price_sol")?;
+
+            // Calculate percentages in Rust
+            let top10_holders_percent =
+                calculate_percentage(top10_amount_raw, scale_factor, token_supply);
+            let dev_holds_percent =
+                calculate_percentage(dev_amount_raw, scale_factor, token_supply);
+            let snipers_holds_percent =
+                calculate_percentage(snipers_amount_raw, scale_factor, token_supply);
+
+            // Calculate market cap in Rust
+            let market_cap_sol = calculate_market_cap(current_price, token_supply);
+
+            let pulse_data: PulseDataResponse = PulseDataResponse {
+                pair_address: bs58::encode(pool.get::<Vec<u8>, _>("pool_address")).into_string(),
+                liquidity_sol: pool.try_get::<Decimal, _>("liquidity_sol")?,
+                liquidity_token: pool.try_get::<Decimal, _>("liquidity_token")?,
+                token_address: bs58::encode(pool.get::<Vec<u8>, _>("mint_address")).into_string(),
+                bonding_curve_percent: pool.try_get::<Decimal, _>("bonding_curve_percent")?,
+                token_name: pool.try_get("name")?,
+                token_symbol: pool.try_get("symbol")?,
+                token_decimals: pool.try_get::<i16, _>("decimals")? as u8, // Fix type mismatch
+                creator: bs58::encode(pool.try_get::<Vec<u8>, _>("creator")?).into_string(),
+                protocol: pool.try_get("factory")?,
+                website: pool.try_get("website")?,
+                twitter: pool.try_get("twitter")?,
+                telegram: pool.try_get("telegram")?,
+                top10_holders_percent,
+                dev_holds_percent,
+                snipers_holds_percent,
+                volume_sol: pool.try_get::<Decimal, _>("volume_sol")?,
+                market_cap_sol,
+                created_at: pool.try_get::<DateTime<Utc>, _>("created_at")?,
+                migration_count: pool.try_get("migration_count")?,
+                num_txns: pool.try_get("num_txns")?,
+                num_buys: pool.try_get("num_buys")?,
+                num_sells: pool.try_get("num_sells")?,
+                num_holders: pool.try_get("num_holders")?,
+                supply: pool.try_get("token_supply")?,
+                token_image: pool.try_get("image")?,
+                dev_wallet_funding: if let Some(funding_wallet) =
+                    pool.try_get::<Option<Vec<u8>>, _>("funding_wallet_address")?
+                {
+                    Some(DevWalletFunding {
+                        funding_wallet_address: bs58::encode(funding_wallet).into_string(),
+                        wallet_address: bs58::encode(pool.try_get::<Vec<u8>, _>("wallet_address")?)
+                            .into_string(),
+                        amount_sol: pool.try_get("amount_sol")?,
+                        hash: bs58::encode(pool.try_get::<Vec<u8>, _>("transfer_hash")?)
+                            .into_string(),
+                        funded_at: pool.try_get::<DateTime<Utc>, _>("funded_at")?,
+                    })
+                } else {
+                    None
+                },
+            };
+            data.push(pulse_data);
+        }
+        Ok(data)
+    }
+
+    pub async fn get_token_info(&self, pool_address: Vec<u8>) -> Result<TokenInfo, sqlx::Error> {
+        let query = r#"
+        WITH pool_info AS (
+          SELECT p.pool_address, p.token_base_address, p.creator,
+       p.pool_base_address, p.pool_quote_address,p.slot
+            FROM pools p 
+            WHERE p.pool_address = $1
+        ),
+        top10_holders AS (
+            SELECT sum(amount) AS top10_amount_raw
+            FROM (
+                SELECT
+                    a.amount,
+                    row_number() OVER (ORDER BY a.amount DESC) AS rn
+                FROM pool_info pi
+                JOIN accounts a ON a.mint = pi.token_base_address
+                WHERE a.owner NOT IN (pi.pool_address, pi.pool_base_address, pi.pool_quote_address)
+            ) x
+            WHERE rn <= 10
+        ),
+        dev_hold AS (
+            SELECT coalesce(a.amount, 0) AS dev_amount_raw
+            FROM pool_info pi
+            LEFT JOIN accounts a
+                ON a.mint = pi.token_base_address
+                AND a.owner = pi.creator
+        ),
+        bundlers_holds AS (
+            SELECT coalesce(sum(s.base_amount), 0) AS bundlers_amount_raw
+            FROM pool_info pi
+            JOIN swaps s ON s.pool_address = pi.pool_address
+            WHERE s.swap_type = 'BUY'
+                AND s.slot = pi.slot  -- Only buys after pool creation
+                AND s.creator NOT IN (pi.pool_address, pi.pool_base_address, pi.pool_quote_address)
+        ),
+      snipers_holds AS (
+            SELECT coalesce(sum(s.base_amount), 0) AS snipers_amount_raw
+            FROM pool_info pi
+            JOIN swaps s ON s.pool_address = pi.pool_address
+            WHERE s.swap_type = 'BUY'
+                AND s.slot = pi.slot + 1  -- Only buys after pool creation
+                AND s.creator NOT IN (pi.pool_address, pi.pool_base_address, pi.pool_quote_address)
+        ),
+        total_holders AS (
+            SELECT count(DISTINCT a.owner) AS num_holders
+            FROM pool_info pi
+            JOIN accounts a ON a.mint = pi.token_base_address
+            WHERE a.owner NOT IN (pi.pool_address, pi.pool_base_address, pi.pool_quote_address)
+        ),
+        tok AS (
+            SELECT 
+                t.mint_address,
+                t.decimals,
+                t.supply::numeric AS token_supply,
+                power(10::numeric, t.decimals)::numeric AS scale_factor
+            FROM tokens t
+            JOIN pool_info pi ON t.mint_address = pi.token_base_address
+        )
+        SELECT 
+            COALESCE(th.top10_amount_raw, 0) AS top10_amount_raw,
+            COALESCE(d.dev_amount_raw, 0) AS dev_amount_raw,
+            COALESCE(sh.snipers_amount_raw, 0) AS snipers_amount_raw,
+            COALESCE(t.num_holders, 0) AS num_holders,
+            COALESCE(tk.token_supply, 0) AS token_supply,
+            COALESCE(tk.scale_factor, 1) AS scale_factor,
+            COALESCE(bh.bundlers_amount_raw, 0) AS bundlers_amount_raw
+        FROM pool_info pi
+        CROSS JOIN top10_holders th
+        CROSS JOIN dev_hold d
+        CROSS JOIN snipers_holds sh
+        CROSS JOIN bundlers_holds bh
+        CROSS JOIN total_holders t
+        CROSS JOIN tok tk
+
+    "#;
+        let token_info = sqlx::query(query)
+            .bind(pool_address)
+            .fetch_one(&self.pool)
+            .await?;
+
+        let scale_factor: Decimal = token_info.try_get::<Decimal, _>("scale_factor")?;
+        let token_supply: Decimal = token_info.try_get::<Decimal, _>("token_supply")?;
+        let top10_amount_raw: Decimal = token_info.try_get::<Decimal, _>("top10_amount_raw")?;
+        let dev_amount_raw: Decimal = token_info.try_get::<Decimal, _>("dev_amount_raw")?;
+        let snipers_amount_raw: Decimal = token_info.try_get::<Decimal, _>("snipers_amount_raw")?;
+        let num_holders: i64 = token_info.try_get::<i64, _>("num_holders")?;
+        let bundlers_amount_raw: Decimal =
+            token_info.try_get::<Decimal, _>("bundlers_amount_raw")?;
+        let token_info = TokenInfo {
+            bundlers_hold_percent: calculate_percentage(
+                bundlers_amount_raw,
+                scale_factor,
+                token_supply,
+            ),
+            dev_holds_percent: calculate_percentage(dev_amount_raw, scale_factor, token_supply),
+            num_holders,
+            snipers_hold_percent: calculate_percentage(
+                snipers_amount_raw,
+                scale_factor,
+                token_supply,
+            ),
+            top10_holders_percent: calculate_percentage(
+                top10_amount_raw,
+                scale_factor,
+                token_supply,
+            ),
+        };
+        Ok(token_info)
+    }
+
+    pub async fn get_trader_details(
+        &self,
+        creator: Vec<u8>,
+        pool_address: Vec<u8>,
+    ) -> Result<TopTrader, sqlx::Error> {
+        let query = r#"
+SELECT
+  s.creator,
+  COALESCE(SUM(s.base_amount)  FILTER (WHERE s.base_amount  > 0), 0) AS base_bought,
+  COALESCE(SUM(s.quote_amount) FILTER (WHERE s.quote_amount > 0), 0) AS quote_bought,
+  COALESCE(-SUM(s.base_amount)  FILTER (WHERE s.base_amount  < 0), 0) AS base_sold,
+  COALESCE(-SUM(s.quote_amount) FILTER (WHERE s.quote_amount < 0), 0) AS quote_sold,
+  COALESCE(BOOL_OR(
+    s.slot = (SELECT MIN(slot) FROM swaps WHERE pool_address = $1)
+  ), FALSE) AS is_sniper
+FROM swaps s
+WHERE s.pool_address = $1
+  AND s.creator      = $2
+GROUP BY s.creator;
+
+"#;
+        let row = sqlx::query(query)
+            .bind(pool_address)
+            .bind(creator)
+            .fetch_one(&self.pool)
+            .await?;
+
+        Ok(TopTrader {
+            base_bought: row.try_get::<Decimal, _>("base_bought")?,
+            base_sold: row.try_get::<Decimal, _>("base_sold")?,
+            creator: bs58::encode(row.try_get::<Vec<u8>, _>("creator")?).into_string(),
+            is_sniper: row.try_get::<bool, _>("is_sniper")?,
+            quote_bought: row.try_get::<Decimal, _>("quote_bought")?,
+            quote_sold: row.try_get::<Decimal, _>("quote_sold")?,
+        })
     }
 }

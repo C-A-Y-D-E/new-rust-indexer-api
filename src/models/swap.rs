@@ -50,10 +50,10 @@ pub struct Swap {
     pub quote_amount: Decimal,
     pub slot: u64,
     pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+    // pub updated_at: DateTime<Utc>,
 }
 
-#[derive(Debug, FromRow)]
+#[derive(Debug, FromRow, Serialize, Deserialize, Clone)]
 
 pub struct DBSwap {
     pub creator: Vec<u8>,
@@ -68,7 +68,7 @@ pub struct DBSwap {
     pub quote_amount: Decimal,
     pub slot: i64,
     pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+    // pub updated_at: DateTime<Utc>,
 }
 
 #[derive(Debug, FromRow, Serialize, Deserialize)]
@@ -85,7 +85,7 @@ pub struct ResponseSwap {
     pub quote_amount: Decimal,
     pub slot: i64,
     pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+    // pub updated_at: DateTime<Utc>,
 }
 
 impl From<Swap> for DBSwap {
@@ -103,7 +103,7 @@ impl From<Swap> for DBSwap {
             quote_amount: Decimal::from(swap.quote_amount),
             slot: swap.slot as i64,
             created_at: swap.created_at,
-            updated_at: swap.updated_at,
+            // updated_at: swap.updated_at,
         }
     }
 }
@@ -126,7 +126,7 @@ impl TryFrom<DBSwap> for Swap {
             quote_amount: db_swap.quote_amount,
             slot: db_swap.slot as u64,
             created_at: db_swap.created_at,
-            updated_at: db_swap.updated_at,
+            // updated_at: db_swap.updated_at,
         })
     }
 }
@@ -148,7 +148,26 @@ impl TryFrom<DBSwap> for ResponseSwap {
             quote_amount: db_swap.quote_amount,
             slot: db_swap.slot,
             created_at: db_swap.created_at,
-            updated_at: db_swap.updated_at,
+            // updated_at: db_swap.updated_at,
         })
+    }
+}
+
+impl From<ResponseSwap> for DBSwap {
+    fn from(swap: ResponseSwap) -> Self {
+        Self {
+            creator: hex::decode(swap.creator).unwrap(),
+            pool_address: hex::decode(swap.pool_address).unwrap(),
+            base_reserve: swap.base_reserve,
+            quote_reserve: swap.quote_reserve,
+            price_sol: swap.price_sol,
+            swap_type: swap.swap_type,
+            hash: hex::decode(swap.hash).unwrap(),
+            base_amount: swap.base_amount,
+            quote_amount: swap.quote_amount,
+            slot: swap.slot,
+            created_at: swap.created_at,
+            // updated_at: swap.updated_at,
+        }
     }
 }

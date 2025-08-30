@@ -1,3 +1,5 @@
+use std::str::FromStr;
+
 use axum::{
     Json,
     extract::{Path, Query, State},
@@ -6,7 +8,7 @@ use axum::{
 use chrono::{DateTime, Duration, NaiveDateTime, Utc};
 use serde_json::json;
 use spl_token::solana_program::pubkey::Pubkey;
-use tracing::error;
+use tracing::{error, warn};
 
 use crate::{services::db::DbService, types::candlestick::CandlestickQuery};
 
@@ -14,7 +16,10 @@ pub async fn get_candlestick(
     Query(query): Query<CandlestickQuery>,
     State(db): State<DbService>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let pool_address = Pubkey::from_str_const(&query.pool_address);
+    let pool_address = Pubkey::from_str(&query.pool_address).map_err(|e| {
+        warn!(?e, "Failed to parse pool in candlestick");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
     // Convert start_time and end_time from unix timestamp (i64) to DateTime<Utc>
     let start_time: DateTime<Utc> = query
         .start_time

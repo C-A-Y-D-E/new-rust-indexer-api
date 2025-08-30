@@ -1,3 +1,5 @@
+pub mod new_pool_event;
+pub mod new_swap_event;
 pub mod store;
 
 use serde::{Deserialize, Serialize};

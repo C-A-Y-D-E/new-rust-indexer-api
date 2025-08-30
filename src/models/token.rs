@@ -24,7 +24,7 @@ pub struct Token {
     pub program_id: Pubkey,
 }
 
-#[derive(Debug, FromRow, Serialize)]
+#[derive(Debug, FromRow, Serialize, Deserialize)]
 pub struct DBToken {
     pub hash: Vec<u8>,
     pub mint_address: Vec<u8>,

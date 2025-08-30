@@ -1,6 +1,9 @@
+use std::str::FromStr;
+
 use axum::{
     Json,
     extract::{Path, State},
+    http::StatusCode,
 };
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
@@ -8,6 +11,7 @@ use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use spl_token::solana_program::pubkey::Pubkey;
+use tracing::warn;
 
 use crate::{models::swap::SwapType, services::db::DbService};
 
@@ -24,16 +28,20 @@ struct LastTransactionResponse {
     pub quote_amount: Decimal,
     pub slot: u64,
     pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+    // pub updated_at: DateTime<Utc>,
 }
 
 pub async fn get_last_transaction(
     db: State<DbService>,
-    path: Path<String>,
+    Path(address): Path<String>,
 ) -> Result<Json<serde_json::Value>, axum::http::StatusCode> {
-    println!("pool_address: {}", path.0);
-    let pool_address = Pubkey::from_str_const(&path.0);
-    println!("pool_address: {:?}", pool_address);
+    let pool_address = Pubkey::from_str(&address).map_err(|_| {
+        warn!(
+            "failed to parse pool address from last transasction {}",
+            address
+        );
+        StatusCode::BAD_REQUEST
+    })?;
 
     let last_transaction = db
         .get_last_transaction(pool_address.to_bytes().to_vec())
@@ -52,7 +60,6 @@ pub async fn get_last_transaction(
                 quote_amount: swap.quote_amount,
                 slot: swap.slot,
                 created_at: swap.created_at,
-                updated_at: swap.updated_at,
             };
             Ok(Json(json!(response)))
         }
