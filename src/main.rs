@@ -63,7 +63,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .await
             .unwrap();
         let mut stream = listener.into_stream();
-        let recent_pools = db_clone.get_24hr_recent_pools().await.unwrap();
+        let recent_pools = db_clone.get_24hr_recent_pools().await.unwrap_or(Vec::new());
         let mut pool_manager = PoolManager::new(recent_pools);
         while let Ok(Some(notification)) = stream.try_next().await {
             if notification.channel() == "pool_inserted" {
@@ -131,7 +131,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
     info!("Server is running on port 3001");
     // run our app with hyper, listening globally on port 3000
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:3001")
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:3001")
         .await
         .unwrap();
     axum::serve(listener, app).await.unwrap();
