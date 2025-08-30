@@ -129,7 +129,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 // Socket layer
                 .layer(layer),
         );
-    info!("Server is running on port 3001");
+    info!("Server is running on ports 3001");
     // run our app with hyper, listening globally on port 3000
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3001")
         .await

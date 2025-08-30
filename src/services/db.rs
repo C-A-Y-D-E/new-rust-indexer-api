@@ -496,7 +496,7 @@ CASE
          END as price_change_percent
             FROM swaps_{table_suffix}
             WHERE pool_address = $1
-       
+            AND bucket_start >= NOW() - INTERVAL '24 hours'
             ORDER BY bucket_start DESC
             "#
         );
