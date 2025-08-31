@@ -851,15 +851,23 @@ CASE
                 JOIN all_pools r ON r.pool_address = s.pool_address
                 ORDER BY s.pool_address, s.created_at DESC
             ),
-            vol_24h AS (
-                SELECT s24.pool_address,
-                    (s24.buy_volume + s24.sell_volume) AS volume_sol,
-                    s24.buy_count::int8 AS num_buys,
-                    s24.sell_count::int8 AS num_sells,
-                    (s24.buy_count + s24.sell_count)::int8 AS num_txns
-                FROM swaps_24h s24
-                JOIN all_pools r USING (pool_address)
-            ),
+          vol_24h AS (
+    SELECT 
+        s.pool_address,
+        SUM(
+            CASE 
+                WHEN s.swap_type = 'BUY' THEN s.quote_amount 
+                WHEN s.swap_type = 'SELL' THEN s.base_amount 
+            END
+        ) AS volume_sol,
+        COUNT(*) FILTER (WHERE s.swap_type = 'BUY')::int8 AS num_buys,
+        COUNT(*) FILTER (WHERE s.swap_type = 'SELL')::int8 AS num_sells,
+        COUNT(*)::int8 AS num_txns
+    FROM swaps s
+    JOIN all_pools r USING (pool_address)
+    WHERE s.created_at >= NOW() - INTERVAL '24 hours'
+    GROUP BY s.pool_address
+),
             holders_base AS (
                 SELECT
                     r.pool_address,
