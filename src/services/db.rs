@@ -1001,8 +1001,15 @@ CASE
             let top10_amount_raw: Decimal = pool.try_get::<Decimal, _>("top10_amount_raw")?;
             let dev_amount_raw: Decimal = pool.try_get::<Decimal, _>("dev_amount_raw")?;
             let snipers_amount_raw: Decimal = pool.try_get::<Decimal, _>("snipers_amount_raw")?;
-            let scale_factor: Decimal = pool.try_get::<Decimal, _>("scale_factor")?;
-            let token_supply: Decimal = pool.try_get::<Decimal, _>("token_supply")?;
+            let scale_factor = match pool.try_get::<Option<Decimal>, _>("scale_factor")? {
+                Some(sf) => sf,
+                None => continue, // Skip this pool if scale_factor is null
+            };
+
+            let token_supply = match pool.try_get::<Option<Decimal>, _>("token_supply")? {
+                Some(ts) => ts,
+                None => continue, // Skip this pool if token_supply is null
+            };
             let current_price: Decimal = pool.try_get::<Decimal, _>("current_price_sol")?;
 
             // Calculate percentages in Rust
