@@ -865,7 +865,7 @@ CASE
         COUNT(*)::int8 AS num_txns
     FROM swaps s
     JOIN all_pools r USING (pool_address)
-    WHERE s.created_at >= NOW() - INTERVAL '24 hours'
+    WHERE s.created_at >= NOW() - INTERVAL '5 minutes'
     GROUP BY s.pool_address
 ),
             holders_base AS (
