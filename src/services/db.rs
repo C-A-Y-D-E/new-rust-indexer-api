@@ -832,161 +832,177 @@ CASE
                 FROM pools p
                 JOIN target_pools tp ON tp.pool_address = p.pool_address
             ),
-            tok AS (
-                SELECT
-                    t.mint_address,
-                    t.name, t.symbol, t.image, t.decimals,
-                    t.website, t.twitter, t.telegram,
-                    t.supply::numeric AS token_supply,
-                    power(10::numeric, t.decimals)::numeric AS scale_factor
-                FROM tokens t
-            ),
-            latest_swap AS (
-                SELECT DISTINCT ON (s.pool_address)
-                    s.pool_address,
-                    s.base_reserve  AS latest_base_reserve,
-                    s.quote_reserve AS latest_quote_reserve,
-                    s.price_sol     AS latest_price_sol
-                FROM swaps s
-                JOIN all_pools r ON r.pool_address = s.pool_address
-                ORDER BY s.pool_address, s.created_at DESC
-            ),
-          vol_24h AS (
-    SELECT 
-        s.pool_address,
-        SUM(
-            CASE 
-                WHEN s.swap_type = 'BUY' THEN s.quote_amount 
-                WHEN s.swap_type = 'SELL' THEN s.base_amount 
-            END
-        ) AS volume_sol,
-        COUNT(*) FILTER (WHERE s.swap_type = 'BUY')::int8 AS num_buys,
-        COUNT(*) FILTER (WHERE s.swap_type = 'SELL')::int8 AS num_sells,
-        COUNT(*)::int8 AS num_txns
-    FROM swaps s
-    JOIN all_pools r USING (pool_address)
-    WHERE s.created_at >= NOW() - INTERVAL '5 minutes'
-    GROUP BY s.pool_address
+tok AS (
+  SELECT
+    t.mint_address,
+    t.name, t.symbol, t.image, t.decimals,
+    t.website, t.twitter, t.telegram,
+    t.supply::numeric AS token_supply,
+    power(10::numeric, t.decimals)::numeric AS scale_factor
+  FROM tokens t
 ),
-            holders_base AS (
-                SELECT
-                    r.pool_address,
-                    count(DISTINCT a.owner) AS num_holders
-                FROM all_pools r
-                JOIN accounts a ON a.mint = r.token_base_address
-                WHERE a.owner NOT IN (r.pool_address, r.pool_base_address, r.pool_quote_address)
-                GROUP BY r.pool_address
-            ),
-            top10_holders AS (
-                SELECT pool_address, sum(amount) AS top10_amount_raw
-                FROM (
-                    SELECT
-                        r.pool_address,
-                        a.amount,
-                        row_number() OVER (PARTITION BY r.pool_address ORDER BY a.amount DESC) AS rn
-                    FROM all_pools r
-                    JOIN accounts a
-                        ON a.mint = r.token_base_address
-                        AND a.owner NOT IN (r.pool_address, r.pool_base_address, r.pool_quote_address)
-                ) x
-                WHERE rn <= 10
-                GROUP BY pool_address
-            ),
-            dev_hold AS (
-                SELECT
-                    r.pool_address,
-                    coalesce(max(a.amount), 0) AS dev_amount_raw
-                FROM all_pools r
-                LEFT JOIN accounts a
-                    ON a.mint  = r.token_base_address
-                    AND a.owner = r.creator
-                    AND a.owner <> r.pool_address
-                GROUP BY r.pool_address
-            ),
-            snipers_holds AS (
-                SELECT
-                    r.pool_address,
-                    coalesce(sum(s.base_amount), 0) AS snipers_amount_raw
-                FROM all_pools r
-                LEFT JOIN swaps s ON s.pool_address = r.pool_address
-                WHERE s.swap_type = 'BUY'
-                    AND s.creator NOT IN (r.pool_address, r.pool_base_address, r.pool_quote_address)
-                GROUP BY r.pool_address
-            ),
-            dev_wallet_funding AS (
-                SELECT DISTINCT ON (r.pool_address)
-                    r.pool_address,
-                    ts.source,
-                    ts.destination,
-                    ts.amount,
-                    ts.hash,
-                    ts.created_at
-                FROM all_pools r
-                LEFT JOIN transfer_sol ts ON ts.destination = r.creator
-                ORDER BY r.pool_address, ts.created_at ASC
-            ),
-            migration AS (
-                SELECT r.creator,
-                    count(*) FILTER (WHERE p2.pre_factory = 'PumpFun' AND p2.factory = 'PumpSwap') AS migration_count
-                FROM all_pools r
-                LEFT JOIN pools p2 ON p2.creator = r.creator
-                GROUP BY r.creator
-            )
-            SELECT
-                r.pool_address,
-                r.creator,
-                r.token_base_address,
-                r.token_quote_address,
-                r.factory,
-                r.created_at,
-                r.initial_token_base_reserve,
-                r.initial_token_quote_reserve,
-                coalesce(r.curve_percentage, 0) AS bonding_curve_percent,
-            
-                -- token meta
-                t.name, t.symbol, t.image, t.decimals, t.website, t.twitter, t.telegram, t.mint_address,
-                t.token_supply,
-                t.scale_factor,
-            
-                -- liquidity/price (fallback to initial if no swaps yet)
-                coalesce(ls.latest_quote_reserve, r.initial_token_quote_reserve) AS liquidity_sol,
-                coalesce(ls.latest_base_reserve,  r.initial_token_base_reserve)  AS liquidity_token,
-                coalesce(ls.latest_price_sol, 0)                                 AS current_price_sol,
-            
-                -- 24h volume & activity
-                coalesce(v.volume_sol, 0)                                        AS volume_sol,
-                coalesce(v.num_txns, 0)                                          AS num_txns,
-                coalesce(v.num_buys, 0)                                          AS num_buys,
-                coalesce(v.num_sells, 0)                                         AS num_sells,
-            
-                -- holders
-                coalesce(h.num_holders, 0)                                       AS num_holders,
-            
-                -- raw amounts for calculation in Rust
-                coalesce(th.top10_amount_raw, 0)                                 AS top10_amount_raw,
-                coalesce(d.dev_amount_raw, 0)                                    AS dev_amount_raw,
-                coalesce(sh.snipers_amount_raw, 0)                               AS snipers_amount_raw,
-            
-                -- migrations
-                coalesce(m.migration_count, 0)                                   AS migration_count,
-                
-                -- dev wallet funding (first transfer)
-                df.source as funding_wallet_address,
-                df.destination as wallet_address,
-                df.amount as amount_sol,
-                df.hash as transfer_hash,
-                df.created_at as funded_at
-    
-            FROM all_pools r
-            LEFT JOIN tok           t  ON t.mint_address = r.token_base_address
-            LEFT JOIN latest_swap   ls ON ls.pool_address = r.pool_address
-            LEFT JOIN vol_24h       v  ON v.pool_address  = r.pool_address
-            LEFT JOIN holders_base  h  ON h.pool_address  = r.pool_address
-            LEFT JOIN top10_holders th ON th.pool_address = r.pool_address
-            LEFT JOIN dev_hold      d  ON d.pool_address  = r.pool_address
-            LEFT JOIN snipers_holds sh ON sh.pool_address = r.pool_address
-            LEFT JOIN dev_wallet_funding df ON df.pool_address = r.pool_address
-            LEFT JOIN migration     m  ON m.creator       = r.creator
+latest_swap AS (
+  SELECT
+    r.pool_address,
+    ls.latest_base_reserve,
+    ls.latest_quote_reserve,
+    ls.latest_price_sol
+  FROM all_pools r
+  LEFT JOIN LATERAL (
+    SELECT
+      s.base_reserve  AS latest_base_reserve,
+      s.quote_reserve AS latest_quote_reserve,
+      s.price_sol     AS latest_price_sol
+    FROM swaps s
+    WHERE s.pool_address = r.pool_address
+    ORDER BY s.created_at DESC
+    LIMIT 1
+  ) ls ON TRUE
+),
+holders_base AS (
+  SELECT
+    r.pool_address,
+    COUNT(DISTINCT a.owner) AS num_holders
+  FROM all_pools r
+  JOIN accounts a
+    ON a.mint = r.token_base_address
+   AND a.owner <> ALL (ARRAY[r.pool_address, r.pool_base_address, r.pool_quote_address])
+  GROUP BY r.pool_address
+),
+top10_holders AS (
+  SELECT pool_address, SUM(amount) AS top10_amount_raw
+  FROM (
+    SELECT r.pool_address, a.amount,
+           ROW_NUMBER() OVER (PARTITION BY r.pool_address ORDER BY a.amount DESC) AS rn
+    FROM all_pools r
+    JOIN accounts a
+      ON a.mint = r.token_base_address
+     AND a.owner <> ALL (ARRAY[r.pool_address, r.pool_base_address, r.pool_quote_address])
+  ) x
+  WHERE rn <= 10
+  GROUP BY pool_address
+),
+dev_hold AS (
+  SELECT
+    r.pool_address,
+    coalesce(max(a.amount), 0) AS dev_amount_raw
+  FROM all_pools r
+  LEFT JOIN accounts a
+    ON a.mint  = r.token_base_address
+   AND a.owner = r.creator
+   AND a.owner <> r.pool_address
+  GROUP BY r.pool_address
+),
+snipers_holds AS (
+  SELECT s.pool_address,
+         COALESCE(SUM(s.base_amount), 0) AS snipers_amount_raw
+  FROM swaps s
+  JOIN all_pools r ON r.pool_address = s.pool_address
+  WHERE s.swap_type = 'BUY'
+    AND s.creator <> r.pool_address
+    AND s.creator <> r.pool_base_address
+    AND s.creator <> r.pool_quote_address
+  GROUP BY s.pool_address
+),
+dev_wallet_funding AS (
+  SELECT
+    r.pool_address,
+    df.source,
+    df.destination,
+    df.amount,
+    df.hash,
+    df.created_at
+  FROM all_pools r
+  LEFT JOIN LATERAL (
+    SELECT
+      ts.source,
+      ts.destination,
+      ts.amount,
+      ts.hash,
+      ts.created_at
+    FROM transfer_sol ts
+    WHERE ts.destination = r.creator
+    ORDER BY ts.created_at ASC
+    LIMIT 1
+  ) df ON TRUE
+),
+migration AS (
+  SELECT r.creator,
+         count(*) FILTER (WHERE p2.pre_factory = 'PumpFun' AND p2.factory = 'PumpSwap') AS migration_count
+  FROM all_pools r
+  LEFT JOIN pools p2 ON p2.creator = r.creator
+  GROUP BY r.creator
+),
+  bounds_24h AS (
+  SELECT now() - interval '24 hours' AS from_ts,
+         now() - interval '5 minutes' AS to_ts   -- stop before the current bucket to avoid real-time stitch
+),
+vol_24h AS (         -- choose one source
+  SELECT s.pool_address,
+         SUM(s.buy_volume + s.sell_volume) AS volume_sol,
+         SUM(s.buy_count)::int8            AS num_buys,
+         SUM(s.sell_count)::int8           AS num_sells,
+         SUM(s.buy_count + s.sell_count)::int8 AS num_txns
+  FROM swaps_5m s
+  JOIN all_pools r USING (pool_address)
+  WHERE s.bucket_start >= now() - interval '24 hours'
+    AND s.bucket_start <  now() - interval '5 minutes'
+  GROUP BY s.pool_address
+)
+SELECT
+  r.pool_address,
+  r.creator,
+  r.token_base_address,
+  r.token_quote_address,
+  r.factory,
+  r.created_at,
+  r.initial_token_base_reserve,
+  r.initial_token_quote_reserve,
+  coalesce(r.curve_percentage, 0) AS bonding_curve_percent,
+
+  -- token meta
+  t.name, t.symbol, t.image, t.decimals, t.website, t.twitter, t.telegram, t.mint_address,
+  t.token_supply,
+  t.scale_factor,
+
+  -- liquidity/price (fallback to initial if no swaps yet)
+  coalesce(ls.latest_quote_reserve, r.initial_token_quote_reserve) AS liquidity_sol,
+  coalesce(ls.latest_base_reserve,  r.initial_token_base_reserve)  AS liquidity_token,
+  coalesce(ls.latest_price_sol, 0)                                 AS current_price_sol,
+
+  -- holders
+  coalesce(h.num_holders, 0)                                       AS num_holders,
+
+  -- raw amounts for calculation in Rust
+  coalesce(th.top10_amount_raw, 0)                                 AS top10_amount_raw,
+  coalesce(d.dev_amount_raw, 0)                                    AS dev_amount_raw,
+  coalesce(sh.snipers_amount_raw, 0)                               AS snipers_amount_raw,
+
+  -- migrations
+  coalesce(m.migration_count, 0)                                   AS migration_count,
+
+  coalesce(v.volume_sol, 0) AS volume_sol,
+coalesce(v.num_txns,   0) AS num_txns,
+coalesce(v.num_buys,   0) AS num_buys,
+coalesce(v.num_sells,  0) AS num_sells,
+
+  -- dev wallet funding (first transfer)
+  df.source       AS funding_wallet_address,
+  df.destination  AS wallet_address,
+  df.amount       AS amount_sol,
+  df.hash         AS transfer_hash,
+  df.created_at   AS funded_at
+
+FROM all_pools r
+LEFT JOIN vol_24h v ON v.pool_address = r.pool_address
+LEFT JOIN tok              t  ON t.mint_address = r.token_base_address
+LEFT JOIN latest_swap      ls ON ls.pool_address = r.pool_address
+LEFT JOIN holders_base     h  ON h.pool_address  = r.pool_address
+LEFT JOIN top10_holders    th ON th.pool_address = r.pool_address
+LEFT JOIN dev_hold         d  ON d.pool_address  = r.pool_address
+LEFT JOIN snipers_holds    sh ON sh.pool_address = r.pool_address
+LEFT JOIN dev_wallet_funding df ON df.pool_address = r.pool_address
+LEFT JOIN migration        m  ON m.creator       = r.creator;
         "#;
 
         let pools = sqlx::query(query)
