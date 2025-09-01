@@ -183,10 +183,6 @@ migration AS (
   LEFT JOIN pools p2 ON p2.creator = r.creator
   GROUP BY r.creator
 ),
-  bounds_24h AS (
-  SELECT now() - interval '24 hours' AS from_ts,
-         now() - interval '5 minutes' AS to_ts   -- stop before the current bucket to avoid real-time stitch
-),
 vol_24h AS (         -- choose one source
   SELECT s.pool_address,
          SUM(s.buy_volume + s.sell_volume) AS volume_sol,
@@ -195,9 +191,7 @@ vol_24h AS (         -- choose one source
          SUM(s.buy_count + s.sell_count)::int8 AS num_txns
   FROM swaps_5m s
   JOIN all_pools r USING (pool_address)
-  CROSS JOIN bounds_24h b
-  WHERE s.bucket_start >= b.from_ts
-    AND s.bucket_start <  b.to_ts
+  WHERE  s.bucket_start <  now() - interval '5 minutes'
   GROUP BY s.pool_address
 )
 SELECT
@@ -253,7 +247,7 @@ LEFT JOIN top10_holders    th ON th.pool_address = r.pool_address
 LEFT JOIN dev_hold         d  ON d.pool_address  = r.pool_address
 LEFT JOIN snipers_holds    sh ON sh.pool_address = r.pool_address
 LEFT JOIN dev_wallet_funding df ON df.pool_address = r.pool_address
-LEFT JOIN migration        m  ON m.creator       = r.creator;
+LEFT JOIN migration        m  ON m.creator       = r.creator
           "#);
             // Apply remaining filters (excluding age since it's already applied above)
             let mut where_conditions = Vec::new();
@@ -431,23 +425,22 @@ LEFT JOIN migration        m  ON m.creator       = r.creator;
             }
 
             // Add WHERE clause if we have conditions
-            if !where_conditions.is_empty() {
-                query.push_str(" WHERE ");
-                query.push_str(&where_conditions.join(" AND "));
-            }
+            // if !where_conditions.is_empty() {
+            //     query.push_str(" WHERE ");
+            //     query.push_str(&where_conditions.join(" AND "));
+            // }
 
             // Close the CTE and add basic SELECT
             query.push_str(
                 r#"
-                      )
-                      SELECT * FROM filtered_pools
-                      ORDER BY created_at DESC
+        
+                      ORDER BY bonding_curve_percent DESC
                       LIMIT 10;
                       "#,
             );
 
             // let explain_query = format!("EXPLAIN (ANALYZE, BUFFERS) {}", query);
-
+            println!("Generated query: {}", query);
             let pools = sqlx::query(&query).fetch_all(&db.pool).await.map_err(|e| {
                 info!("DB query failed: {e}");
                 StatusCode::INTERNAL_SERVER_ERROR
@@ -680,10 +673,7 @@ migration AS (
   LEFT JOIN pools p2 ON p2.creator = r.creator
   GROUP BY r.creator
 ),
-  bounds_24h AS (
-  SELECT now() - interval '24 hours' AS from_ts,
-         now() - interval '5 minutes' AS to_ts   -- stop before the current bucket to avoid real-time stitch
-),
+
 vol_24h AS (         -- choose one source
   SELECT s.pool_address,
          SUM(s.buy_volume + s.sell_volume) AS volume_sol,
@@ -692,8 +682,7 @@ vol_24h AS (         -- choose one source
          SUM(s.buy_count + s.sell_count)::int8 AS num_txns
   FROM swaps_5m s
   JOIN all_pools r USING (pool_address)
-  WHERE s.bucket_start >= now() - interval '24 hours'
-    AND s.bucket_start <  now() - interval '5 minutes'
+  WHERE  s.bucket_start <  now() - interval '5 minutes'
   GROUP BY s.pool_address
 )
 SELECT
@@ -749,7 +738,7 @@ LEFT JOIN top10_holders    th ON th.pool_address = r.pool_address
 LEFT JOIN dev_hold         d  ON d.pool_address  = r.pool_address
 LEFT JOIN snipers_holds    sh ON sh.pool_address = r.pool_address
 LEFT JOIN dev_wallet_funding df ON df.pool_address = r.pool_address
-LEFT JOIN migration        m  ON m.creator       = r.creator;
+LEFT JOIN migration        m  ON m.creator       = r.creator
           "#);
             // Apply remaining filters (excluding age since it's already applied above)
             let mut where_conditions = Vec::new();
@@ -935,8 +924,6 @@ LEFT JOIN migration        m  ON m.creator       = r.creator;
             // Close the CTE and add basic SELECT
             query.push_str(
                 r#"
-                      )
-                      SELECT * FROM filtered_pools
                       ORDER BY bonding_curve_percent DESC
                       LIMIT 10;
                       "#,
@@ -1175,10 +1162,7 @@ migration AS (
   LEFT JOIN pools p2 ON p2.creator = r.creator
   GROUP BY r.creator
 ),
-  bounds_24h AS (
-  SELECT now() - interval '24 hours' AS from_ts,
-         now() - interval '5 minutes' AS to_ts   -- stop before the current bucket to avoid real-time stitch
-),
+
 vol_24h AS (         -- choose one source
   SELECT s.pool_address,
          SUM(s.buy_volume + s.sell_volume) AS volume_sol,
@@ -1187,8 +1171,7 @@ vol_24h AS (         -- choose one source
          SUM(s.buy_count + s.sell_count)::int8 AS num_txns
   FROM swaps_5m s
   JOIN all_pools r USING (pool_address)
-  WHERE s.bucket_start >= now() - interval '24 hours'
-    AND s.bucket_start <  now() - interval '5 minutes'
+  WHERE  s.bucket_start <  now() - interval '5 minutes'
   GROUP BY s.pool_address
 )
 SELECT
@@ -1244,7 +1227,7 @@ LEFT JOIN top10_holders    th ON th.pool_address = r.pool_address
 LEFT JOIN dev_hold         d  ON d.pool_address  = r.pool_address
 LEFT JOIN snipers_holds    sh ON sh.pool_address = r.pool_address
 LEFT JOIN dev_wallet_funding df ON df.pool_address = r.pool_address
-LEFT JOIN migration        m  ON m.creator       = r.creator;
+LEFT JOIN migration        m  ON m.creator       = r.creator
           "#);
             // Apply remaining filters (excluding age since it's already applied above)
             let mut where_conditions = Vec::new();
@@ -1422,8 +1405,7 @@ LEFT JOIN migration        m  ON m.creator       = r.creator;
             // Close the CTE and add basic SELECT
             query.push_str(
                 r#"
-                      )
-                      SELECT * FROM filtered_pools
+
                       ORDER BY created_at DESC
                       LIMIT 10;
                       "#,

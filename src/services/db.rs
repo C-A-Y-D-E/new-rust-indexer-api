@@ -933,10 +933,6 @@ migration AS (
   LEFT JOIN pools p2 ON p2.creator = r.creator
   GROUP BY r.creator
 ),
-  bounds_24h AS (
-  SELECT now() - interval '24 hours' AS from_ts,
-         now() - interval '5 minutes' AS to_ts   -- stop before the current bucket to avoid real-time stitch
-),
 vol_24h AS (         -- choose one source
   SELECT s.pool_address,
          SUM(s.buy_volume + s.sell_volume) AS volume_sol,
@@ -945,8 +941,7 @@ vol_24h AS (         -- choose one source
          SUM(s.buy_count + s.sell_count)::int8 AS num_txns
   FROM swaps_5m s
   JOIN all_pools r USING (pool_address)
-  WHERE s.bucket_start >= now() - interval '24 hours'
-    AND s.bucket_start <  now() - interval '5 minutes'
+  WHERE  s.bucket_start <  now() - interval '5 minutes'
   GROUP BY s.pool_address
 )
 SELECT
