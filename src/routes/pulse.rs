@@ -195,8 +195,9 @@ vol_24h AS (         -- choose one source
          SUM(s.buy_count + s.sell_count)::int8 AS num_txns
   FROM swaps_5m s
   JOIN all_pools r USING (pool_address)
-  WHERE s.bucket_start >= now() - interval '24 hours'
-    AND s.bucket_start <  now() - interval '5 minutes'
+  CROSS JOIN bounds_24h b
+  WHERE s.bucket_start >= b.from_ts
+    AND s.bucket_start <  b.to_ts
   GROUP BY s.pool_address
 )
 SELECT
