@@ -49,6 +49,9 @@ WITH all_pools AS (
     p.curve_percentage
   FROM pools p
  WHERE p.created_at >= now() - interval '24 hours'
+ AND p.curve_percentage < 50
+
+
 "#,
             );
             if let Some(min_age) = filters.age.min {
@@ -440,12 +443,12 @@ LEFT JOIN migration        m  ON m.creator       = r.creator
             );
 
             // let explain_query = format!("EXPLAIN (ANALYZE, BUFFERS) {}", query);
-            println!("Generated query: {}", query);
+            // println!("{}", query);
+
             let pools = sqlx::query(&query).fetch_all(&db.pool).await.map_err(|e| {
                 info!("DB query failed: {e}");
                 StatusCode::INTERNAL_SERVER_ERROR
             })?;
-            println!("{:?}", pools);
 
             let mut data = Vec::new();
             for pool in pools.into_iter() {

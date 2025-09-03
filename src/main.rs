@@ -77,28 +77,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
             }
-            if notification.channel() == "swap_inserted" {
-                let raw_notification =
-                    serde_json::from_str::<ResponseSwap>(notification.payload()).unwrap();
-                let swap = DBSwap::from(raw_notification);
-                let r = ResponseSwap::try_from(swap.clone()).unwrap();
-                // println!("raw_notification: {:?}", swap);
-                let _ = io_clone.emit(format!("s:{}", r.pool_address), &r).await;
-                let pool_address = swap.pool_address;
-                let batch = pool_manager.verify_and_add_pool(pool_address).await;
+            // if notification.channel() == "swap_inserted" {
+            //     let raw_notification =
+            //         serde_json::from_str::<ResponseSwap>(notification.payload()).unwrap();
+            //     let swap = DBSwap::from(raw_notification);
+            //     let r = ResponseSwap::try_from(swap.clone()).unwrap();
+            //     // println!("raw_notification: {:?}", swap);
+            //     let _ = io_clone.emit(format!("s:{}", r.pool_address), &r).await;
+            //     let pool_address = swap.pool_address;
+            //     let batch = pool_manager.verify_and_add_pool(pool_address).await;
 
-                if batch.is_some() && !batch.as_ref().unwrap().is_empty() {
-                    let pulse_data = db_clone.get_batch_pool_data(&batch.unwrap()).await;
-                    match pulse_data {
-                        Ok(pulse_data) => {
-                            let _ = io_clone.emit("update-pulse", &pulse_data).await;
-                        }
-                        Err(e) => {
-                            println!("Error: {:?}", e);
-                        }
-                    }
-                }
-            }
+            //     if batch.is_some() && !batch.as_ref().unwrap().is_empty() {
+            //         let pulse_data = db_clone.get_batch_pool_data(&batch.unwrap()).await;
+            //         match pulse_data {
+            //             Ok(pulse_data) => {
+            //                 let _ = io_clone.emit("update-pulse", &pulse_data).await;
+            //             }
+            //             Err(e) => {
+            //                 println!("Error: {:?}", e);
+            //             }
+            //         }
+            //     }
+            // }
         }
     });
     // Connection to the socket start
@@ -131,9 +131,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
     info!("Server is running on ports 3001");
     // run our app with hyper, listening globally on port 3000
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:3001")
-        .await
-        .unwrap();
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:3001").await.unwrap();
     axum::serve(listener, app).await.unwrap();
     Ok(())
 }
