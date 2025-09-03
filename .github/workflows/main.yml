@@ -65,8 +65,6 @@ jobs:
             cd ~
             export POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}
             export POSTGRES_DB=${{ secrets.POSTGRES_DB }}
-
-
             # Pull latest images and deploy
             docker-compose pull api
-            docker-compose up -d api --remove-orphans
+            docker-compose up -d --remove-orphans api
