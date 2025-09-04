@@ -52,14 +52,14 @@ pub async fn on_new_pool_event(
             SELECT t.mint_address, t.name, t.symbol, t.image, t.decimals, 
                    t.website, t.twitter, t.telegram, t.supply::numeric AS token_supply, 
                    power(10::numeric, t.decimals)::numeric AS scale_factor
-            FROM tokens t WHERE t.mint_address = $1::bytea
+            FROM tokens t WHERE t.mint_address = $1
         ),
         vol_24h AS (
             SELECT COALESCE(buy_volume + sell_volume, 0) AS volume_sol, 
                    COALESCE(buy_count + sell_count, 0)::int8 AS num_txns,
                    COALESCE(buy_count, 0)::int8 AS num_buys,
                     COALESCE(sell_count, 0)::int8 AS num_sells
-            FROM swaps_24h WHERE pool_address = $2::bytea
+            FROM swaps_24h WHERE pool_address = $2
         ),
         latest_swap AS (
             SELECT DISTINCT ON (s.pool_address)
@@ -68,7 +68,7 @@ pub async fn on_new_pool_event(
                    s.quote_reserve AS latest_quote_reserve,
                    s.price_sol AS latest_price_sol
             FROM swaps s
-            WHERE s.pool_address = $2::bytea
+            WHERE s.pool_address = $2
             ORDER BY s.pool_address, s.created_at DESC
         ),
 
@@ -76,8 +76,8 @@ pub async fn on_new_pool_event(
         
         holders_base AS (
             SELECT COUNT(DISTINCT a.owner) AS num_holders
-            FROM accounts a WHERE a.mint = $1::bytea 
-            AND a.owner NOT IN ($2::bytea, $3::bytea, $4::bytea)
+            FROM accounts a WHERE a.mint = $1 
+            AND a.owner NOT IN ($2, $3, $4)
         ),
         top10_holders AS (
             SELECT COALESCE(SUM(amount), 0) AS top10_amount_raw
@@ -85,23 +85,23 @@ pub async fn on_new_pool_event(
                 SELECT a.amount,
                        ROW_NUMBER() OVER (ORDER BY a.amount DESC) as rn
                 FROM accounts a 
-                WHERE a.mint = $1::bytea 
-                AND a.owner NOT IN ($2::bytea, $3::bytea, $4::bytea)
+                WHERE a.mint = $1 
+                AND a.owner NOT IN ($2, $3, $4)
             ) ranked
             WHERE rn <= 10
         ),
         dev_hold AS (
             SELECT COALESCE(MAX(a.amount), 0) AS dev_amount_raw
-            FROM accounts a WHERE a.mint = $1::bytea AND a.owner = $5::bytea AND a.owner <> $2::bytea
+            FROM accounts a WHERE a.mint = $1 AND a.owner = $5 AND a.owner <> $2
         ),
         snipers_holds AS (
             SELECT COALESCE(SUM(s.base_amount), 0) AS snipers_amount_raw
-            FROM swaps s WHERE s.pool_address = $2::bytea AND s.swap_type = 'BUY' 
-            AND s.creator NOT IN ($5::bytea, $3::bytea, $4::bytea)
+            FROM swaps s WHERE s.pool_address = $2 AND s.swap_type = 'BUY' 
+            AND s.creator NOT IN ($5, $3, $4)
         ),
         migration AS (
             SELECT COUNT(*) FILTER (WHERE p2.pre_factory = 'PumpFun' AND p2.factory = 'PumpSwap') AS migration_count
-            FROM pools p2 WHERE p2.creator = $5::bytea
+            FROM pools p2 WHERE p2.creator = $5
         ),
         dev_wallet_funding AS (
             SELECT DISTINCT ON (ts.destination)
@@ -111,7 +111,7 @@ pub async fn on_new_pool_event(
                 ts.hash,
                 ts.created_at
             FROM transfer_sol ts
-            WHERE ts.destination = $5::bytea
+            WHERE ts.destination = $5
             ORDER BY ts.destination, ts.created_at ASC
         )
         SELECT 
@@ -150,7 +150,7 @@ pub async fn on_new_pool_event(
         LEFT JOIN dev_hold d ON true
         LEFT JOIN snipers_holds sh ON true
         LEFT JOIN migration m ON true
-        LEFT JOIN latest_swap ls ON ls.pool_address = $2::bytea
+        LEFT JOIN latest_swap ls ON ls.pool_address = $2
         LEFT JOIN dev_wallet_funding f ON true
     "#;
 
