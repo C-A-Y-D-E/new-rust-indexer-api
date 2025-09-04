@@ -101,7 +101,6 @@ pub struct PoolEvent {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PoolReport {
-    pub pool_address: String,
     pub bucket_start: DateTime<Utc>,
     pub buy_volume: Decimal,
     pub buy_count: i64,
@@ -221,15 +220,11 @@ impl DbService {
                     {
                         let db_pool = DBPool {
                             pool_address: raw_notification.pool_address,
-                            creator:raw_notification.creator,
-                            token_base_address:raw_notification.token_base_address
-                                ,
-                            token_quote_address:raw_notification.token_quote_address
-                                ,
-                            pool_base_address:raw_notification.pool_base_address
-                            ,
-                            pool_quote_address:raw_notification.pool_quote_address
-                                ,
+                            creator: raw_notification.creator,
+                            token_base_address: raw_notification.token_base_address,
+                            token_quote_address: raw_notification.token_quote_address,
+                            pool_base_address: raw_notification.pool_base_address,
+                            pool_quote_address: raw_notification.pool_quote_address,
                             slot: raw_notification.slot,
 
                             factory: raw_notification.factory,
@@ -244,8 +239,7 @@ impl DbService {
                                 .curve_percentage
                                 .map(|x| Decimal::from_f64(x.to_f64().unwrap()).unwrap()),
                             reversed: raw_notification.reversed,
-                            hash: raw_notification.hash
-                                ,
+                            hash: raw_notification.hash,
                             metadata: raw_notification.metadata,
                             created_at: raw_notification.created_at,
                             updated_at: raw_notification.updated_at,
@@ -264,10 +258,7 @@ impl DbService {
         Ok(())
     }
 
-    pub async fn search_pools(
-        &self,
-        pool_address: String,
-    ) -> Result<Vec<DBPool>, sqlx::Error> {
+    pub async fn search_pools(&self, pool_address: String) -> Result<Vec<DBPool>, sqlx::Error> {
         let query = r#"
             SELECT * FROM pools
             WHERE pool_address = $1
@@ -351,20 +342,15 @@ impl DbService {
         match pool {
             Some(row) => {
                 let pool = DBPool {
-                    pool_address: row.get::<String, _>("pool_address")
-                        ,
+                    pool_address: row.get::<String, _>("pool_address"),
                     factory: row.get("factory"),
                     pre_factory: row.get("pre_factory"),
                     reversed: row.get("reversed"),
-                    token_base_address: row.get::<String, _>("token_base_address")
-                        ,
-                    token_quote_address:                         row.get::<String, _>("token_quote_address"),
-                    
-                    
-                    pool_base_address: row.get::<String, _>("pool_base_address")
-                        ,
-                    pool_quote_address: row.get::<String, _>("pool_quote_address")
-                        ,
+                    token_base_address: row.get::<String, _>("token_base_address"),
+                    token_quote_address: row.get::<String, _>("token_quote_address"),
+
+                    pool_base_address: row.get::<String, _>("pool_base_address"),
+                    pool_quote_address: row.get::<String, _>("pool_quote_address"),
                     curve_percentage: row.get("curve_percentage"),
                     initial_token_base_reserve: row.get("initial_token_base_reserve"),
                     initial_token_quote_reserve: row.get("initial_token_quote_reserve"),
@@ -378,8 +364,7 @@ impl DbService {
 
                 // Build ResponseToken
                 let base_token = DBToken {
-                    mint_address: row.get::<String, _>("mint_address")
-                      ,
+                    mint_address: row.get::<String, _>("mint_address"),
                     name: row.get("name"),
                     symbol: row.get("symbol"),
                     decimals: row.get::<i16, _>("decimals"),
@@ -500,7 +485,6 @@ CASE
                 let mut pool_reports = Vec::new();
                 for row in rows {
                     let pool_report = PoolReport {
-                        pool_address: row.get("pool_address"),
                         bucket_start: row.get("bucket_start"),
                         buy_volume: row.get("buy_volume"),
                         buy_count: row.get("buy_count"),
@@ -706,10 +690,8 @@ CASE
                 let mut holder_responses = Vec::new();
                 for holder in holders {
                     holder_responses.push(HolderResponse {
-                        address: holder.try_get::<String, _>("owner")?
-                            ,
-                        account: holder.try_get::<String, _>("account")?
-                            ,
+                        address: holder.try_get::<String, _>("owner")?,
+                        account: holder.try_get::<String, _>("account")?,
                         amount: Decimal::from_f64(holder.try_get::<f64, _>("normalized_amount")?)
                             .unwrap(),
                         mint: holder.try_get::<String, _>("mint")?,
@@ -1056,8 +1038,7 @@ LEFT JOIN migration        m  ON m.creator       = r.creator;
                 {
                     Some(DevWalletFunding {
                         funding_wallet_address: funding_wallet,
-                        wallet_address: pool.try_get::<String, _>("wallet_address")?
-                            ,
+                        wallet_address: pool.try_get::<String, _>("wallet_address")?,
                         amount_sol: pool.try_get("amount_sol")?,
                         hash: pool.try_get::<String, _>("transfer_hash")?,
                         funded_at: pool.try_get::<DateTime<Utc>, _>("funded_at")?,

@@ -21,17 +21,13 @@ pub async fn on_new_pool_event(
     let db_pool = DBPool {
         pool_address: raw_notification.pool_address,
 
-        creator:raw_notification.creator,
+        creator: raw_notification.creator,
 
-        token_base_address: raw_notification.token_base_address
-            ,
+        token_base_address: raw_notification.token_base_address,
         token_quote_address: raw_notification.token_quote_address,
 
-        pool_base_address:raw_notification.pool_base_address
-            ,
-        pool_quote_address:raw_notification.pool_quote_address
-           ,
-
+        pool_base_address: raw_notification.pool_base_address,
+        pool_quote_address: raw_notification.pool_quote_address,
         slot: raw_notification.slot,
 
         factory: raw_notification.factory,
@@ -214,14 +210,13 @@ pub async fn on_new_pool_event(
         "created_at": &db_pool.created_at,
         "migration_count": result.get::<i64, _>("migration_count"),
         "dev_wallet_funding": if let Some(funding_wallet) =
-            result.get::<Option<Vec<u8>>, _>("funding_wallet_address")
+            result.get::<Option<String>, _>("funding_wallet_address")
         {
             Some(DevWalletFunding {
-                funding_wallet_address: bs58::encode(funding_wallet).into_string(),
-                wallet_address: bs58::encode(result.get::<Vec<u8>, _>("wallet_address"))
-                    .into_string(),
+                funding_wallet_address: funding_wallet,
+                wallet_address: result.get::<String, _>("wallet_address"),
                 amount_sol: result.get("amount_sol"),
-                hash: bs58::encode(result.get::<Vec<u8>, _>("transfer_hash")).into_string(),
+                hash: result.get::<String, _>("transfer_hash"),
                 funded_at: result.get::<DateTime<Utc>, _>("funded_at"),
             })
         } else {
