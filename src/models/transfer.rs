@@ -1,3 +1,5 @@
+use std::str::FromStr;
+
 use rust_decimal::Decimal;
 use solana_signature::Signature;
 use spl_token::solana_program::pubkey::Pubkey;
@@ -12,19 +14,19 @@ pub struct TransferSol {
 }
 
 pub struct DbTransferSol {
-    pub source: Vec<u8>,
-    pub destination: Vec<u8>,
+    pub source: String,
+    pub destination: String,
     pub amount: Decimal,
-    pub hash: Vec<u8>,
+    pub hash: String,
 }
 
 impl From<TransferSol> for DbTransferSol {
     fn from(transfer: TransferSol) -> Self {
         DbTransferSol {
-            source: transfer.source.to_bytes().to_vec(),
-            destination: transfer.destination.to_bytes().to_vec(),
+            source: transfer.source.to_string(),
+            destination: transfer.destination.to_string(),
             amount: Decimal::from(transfer.amount),
-            hash: transfer.hash.as_ref().to_vec(),
+            hash: transfer.hash.to_string(),
         }
     }
 }
@@ -34,11 +36,11 @@ impl TryFrom<DbTransferSol> for TransferSol {
 
     fn try_from(transfer: DbTransferSol) -> Result<Self, Self::Error> {
         Ok(Self {
-            source: Pubkey::try_from(transfer.source).map_err(|_| "parse source".to_string())?,
-            destination: Pubkey::try_from(transfer.destination)
+            source: Pubkey::from_str(&transfer.source).map_err(|_| "parse source".to_string())?,
+            destination: Pubkey::from_str(&transfer.destination)
                 .map_err(|_| "parse destination".to_string())?,
             amount: transfer.amount,
-            hash: Signature::try_from(transfer.hash).map_err(|_| "parse hash".to_string())?,
+            hash: Signature::from_str(&transfer.hash).map_err(|_| "parse hash".to_string())?,
         })
     }
 }

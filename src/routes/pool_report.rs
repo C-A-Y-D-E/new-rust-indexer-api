@@ -1,11 +1,13 @@
+use std::str::FromStr;
+
 use axum::{
-    Json,
-    extract::{Query, State},
+    extract::{Query, State}, http::StatusCode, Json
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use spl_token::solana_program::pubkey::Pubkey;
+use tracing::warn;
 
 use crate::services::db::DbService;
 
@@ -33,11 +35,12 @@ pub async fn get_pool_report(
     Query(params): Query<PoolReportParams>,
     State(db): State<DbService>,
 ) -> Result<Json<serde_json::Value>, axum::http::StatusCode> {
-    let pool_address = Pubkey::from_str_const(&params.pool_address)
-        .to_bytes()
-        .to_vec();
+    let pool_address = Pubkey::from_str(&params.pool_address).map_err(|e| {
+        warn!(?e, "failed to encode pool_address in get_trader_details");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
 
-    let pool_report = db.get_pool_report(pool_address, params.report_type).await;
+    let pool_report = db.get_pool_report(pool_address.to_string(), params.report_type).await;
 
     match pool_report {
         Ok(Some(report)) => Ok(Json(json!(report))),

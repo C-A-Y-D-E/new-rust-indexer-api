@@ -17,32 +17,30 @@ pub async fn on_new_pool_event(
     notification: &PgNotification,
     db_clone: &DbService,
 ) -> Result<(Value, DBPool), Box<dyn Error + Send + Sync>> {
-    let raw_notification = serde_json::from_str::<PoolEvent>(notification.payload()).unwrap();
+    let raw_notification = serde_json::from_str::<DBPool>(notification.payload()).unwrap();
     let db_pool = DBPool {
-        pool_address: hex::decode(&raw_notification.pool_address)
-            .map_err(|_| "parse pool address".to_string())?,
+        pool_address: raw_notification.pool_address,
 
-        creator: hex::decode(&raw_notification.creator).map_err(|_| "parse creator".to_string())?,
+        creator:raw_notification.creator,
 
-        token_base_address: hex::decode(&raw_notification.token_base_address)
-            .map_err(|_| "parse token base address".to_string())?,
-        token_quote_address: hex::decode(&raw_notification.token_quote_address)
-            .map_err(|_| "parse token quote address".to_string())?,
+        token_base_address: raw_notification.token_base_address
+            ,
+        token_quote_address: raw_notification.token_quote_address,
 
-        pool_base_address: hex::decode(&raw_notification.pool_base_address)
-            .map_err(|_| "parse pool base address".to_string())?,
-        pool_quote_address: hex::decode(&raw_notification.pool_quote_address)
-            .map_err(|_| "parse pool quote address".to_string())?,
+        pool_base_address:raw_notification.pool_base_address
+            ,
+        pool_quote_address:raw_notification.pool_quote_address
+           ,
 
         slot: raw_notification.slot,
 
         factory: raw_notification.factory,
-        pre_factory: raw_notification.pre_factory.unwrap_or_default(),
+        pre_factory: raw_notification.pre_factory,
         initial_token_base_reserve: Decimal::from(raw_notification.initial_token_base_reserve),
         initial_token_quote_reserve: Decimal::from(raw_notification.initial_token_quote_reserve),
         curve_percentage: raw_notification.curve_percentage,
         reversed: raw_notification.reversed,
-        hash: hex::decode(&raw_notification.hash).map_err(|_| "parse hash".to_string())?,
+        hash: raw_notification.hash,
 
         metadata: raw_notification.metadata,
         created_at: raw_notification.created_at,

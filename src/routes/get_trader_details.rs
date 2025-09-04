@@ -34,8 +34,8 @@ pub async fn get_trader_details(
     })?;
     match db
         .get_trader_details(
-            creator.to_bytes().to_vec(),
-            pool_address.to_bytes().to_vec(),
+            creator.to_string(),
+            pool_address.to_string(),
         )
         .await
     {

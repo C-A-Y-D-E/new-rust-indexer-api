@@ -17,9 +17,9 @@ use tracing::error;
 
 use crate::defaults::QuoteToken;
 use crate::models::account::{DBAccountState, DBTokenAccount, HolderResponse};
-use crate::models::pool::ResponsePool;
-use crate::models::swap::{DBSwap, ResponseSwap, Swap};
-use crate::models::token::ResponseToken;
+
+use crate::models::swap::{DBSwap, Swap};
+
 use crate::routes::pool_report::ReportType;
 use crate::types::candlestick::Interval;
 use crate::types::pulse::{DevWalletFunding, PulseDataResponse};
@@ -126,7 +126,7 @@ pub struct PoolAndTokenData {
     pre_factory: Option<String>,
     curve_percentage: Option<Decimal>,
     volume_quote: Decimal,
-    base_token: ResponseToken,
+    base_token: DBToken,
     quote_token: QuoteTokenData,
 }
 #[derive(Debug, Serialize, Deserialize)]
@@ -220,24 +220,16 @@ impl DbService {
                         serde_json::from_str::<PoolEvent>(notification.payload())
                     {
                         let db_pool = DBPool {
-                            pool_address: hex::decode(&raw_notification.pool_address)
-                                .map_err(|_| "parse pool address".to_string())
-                                .unwrap(),
-                            creator: hex::decode(&raw_notification.creator)
-                                .map_err(|_| "parse creator".to_string())
-                                .unwrap(),
-                            token_base_address: hex::decode(&raw_notification.token_base_address)
-                                .map_err(|_| "parse token base address".to_string())
-                                .unwrap(),
-                            token_quote_address: hex::decode(&raw_notification.token_quote_address)
-                                .map_err(|_| "parse token quote address".to_string())
-                                .unwrap(),
-                            pool_base_address: hex::decode(&raw_notification.pool_base_address)
-                                .map_err(|_| "parse pool base address".to_string())
-                                .unwrap(),
-                            pool_quote_address: hex::decode(&raw_notification.pool_quote_address)
-                                .map_err(|_| "parse pool quote address".to_string())
-                                .unwrap(),
+                            pool_address: raw_notification.pool_address,
+                            creator:raw_notification.creator,
+                            token_base_address:raw_notification.token_base_address
+                                ,
+                            token_quote_address:raw_notification.token_quote_address
+                                ,
+                            pool_base_address:raw_notification.pool_base_address
+                            ,
+                            pool_quote_address:raw_notification.pool_quote_address
+                                ,
                             slot: raw_notification.slot,
 
                             factory: raw_notification.factory,
@@ -252,9 +244,8 @@ impl DbService {
                                 .curve_percentage
                                 .map(|x| Decimal::from_f64(x.to_f64().unwrap()).unwrap()),
                             reversed: raw_notification.reversed,
-                            hash: hex::decode(&raw_notification.hash)
-                                .map_err(|_| "parse hash".to_string())
-                                .unwrap(),
+                            hash: raw_notification.hash
+                                ,
                             metadata: raw_notification.metadata,
                             created_at: raw_notification.created_at,
                             updated_at: raw_notification.updated_at,
@@ -275,8 +266,8 @@ impl DbService {
 
     pub async fn search_pools(
         &self,
-        pool_address: Vec<u8>,
-    ) -> Result<Vec<ResponsePool>, sqlx::Error> {
+        pool_address: String,
+    ) -> Result<Vec<DBPool>, sqlx::Error> {
         let query = r#"
             SELECT * FROM pools
             WHERE pool_address = $1
@@ -291,7 +282,7 @@ impl DbService {
             Ok(pools) => {
                 let mut response_pools = Vec::new();
                 for pool in pools {
-                    response_pools.push(ResponsePool::try_from(pool).unwrap());
+                    response_pools.push(DBPool::try_from(pool).unwrap());
                 }
                 Ok(response_pools)
             }
@@ -330,7 +321,7 @@ impl DbService {
 
     pub async fn get_pool_and_token_data(
         &self,
-        address: Vec<u8>,
+        address: String,
     ) -> Result<Option<PoolAndTokenData>, sqlx::Error> {
         // 1. address can be token_base_address or pool_address
 
@@ -359,40 +350,39 @@ impl DbService {
             .await?;
         match pool {
             Some(row) => {
-                let pool = ResponsePool {
-                    pool_address: bs58::encode(&row.get::<Vec<u8>, _>("pool_address"))
-                        .into_string(),
+                let pool = DBPool {
+                    pool_address: row.get::<String, _>("pool_address")
+                        ,
                     factory: row.get("factory"),
                     pre_factory: row.get("pre_factory"),
                     reversed: row.get("reversed"),
-                    token_base_address: bs58::encode(&row.get::<Vec<u8>, _>("token_base_address"))
-                        .into_string(),
-                    token_quote_address: bs58::encode(
-                        &row.get::<Vec<u8>, _>("token_quote_address"),
-                    )
-                    .into_string(),
-                    pool_base_address: bs58::encode(&row.get::<Vec<u8>, _>("pool_base_address"))
-                        .into_string(),
-                    pool_quote_address: bs58::encode(&row.get::<Vec<u8>, _>("pool_quote_address"))
-                        .into_string(),
+                    token_base_address: row.get::<String, _>("token_base_address")
+                        ,
+                    token_quote_address:                         row.get::<String, _>("token_quote_address"),
+                    
+                    
+                    pool_base_address: row.get::<String, _>("pool_base_address")
+                        ,
+                    pool_quote_address: row.get::<String, _>("pool_quote_address")
+                        ,
                     curve_percentage: row.get("curve_percentage"),
                     initial_token_base_reserve: row.get("initial_token_base_reserve"),
                     initial_token_quote_reserve: row.get("initial_token_quote_reserve"),
                     slot: row.get("slot"),
-                    creator: bs58::encode(&row.get::<Vec<u8>, _>("creator")).into_string(),
-                    hash: bs58::encode(&row.get::<Vec<u8>, _>("hash")).into_string(),
+                    creator: row.get::<String, _>("creator"),
+                    hash: row.get::<String, _>("hash"),
                     metadata: row.get("metadata"),
                     created_at: row.get("created_at"),
                     updated_at: row.get("updated_at"),
                 };
 
                 // Build ResponseToken
-                let base_token = ResponseToken {
-                    mint_address: bs58::encode(&row.get::<Vec<u8>, _>("mint_address"))
-                        .into_string(),
+                let base_token = DBToken {
+                    mint_address: row.get::<String, _>("mint_address")
+                      ,
                     name: row.get("name"),
                     symbol: row.get("symbol"),
-                    decimals: row.get::<i16, _>("decimals") as u8,
+                    decimals: row.get::<i16, _>("decimals"),
                     uri: row.get("uri"),
                     image: row.get("image"),
                     twitter: row.get("twitter"),
@@ -402,8 +392,8 @@ impl DbService {
                     slot: row.get("slot"),
                     mint_authority: row.get("mint_authority"),
                     freeze_authority: row.get("freeze_authority"),
-                    hash: bs58::encode(&row.get::<Vec<u8>, _>("hash")).into_string(),
-                    program_id: bs58::encode(&row.get::<Vec<u8>, _>("program_id")).into_string(),
+                    hash: row.get::<String, _>("hash"),
+                    program_id: row.get::<String, _>("program_id"),
                 };
                 let quote_token = if pool.token_quote_address == SOL_TOKEN.address {
                     QuoteTokenData {
@@ -430,7 +420,7 @@ impl DbService {
                     quote_liquidity: row.get("quote_reserve"),
                     marketcap_sol: row.get::<Decimal, _>("price_sol") * base_token.supply,
                     factory: pool.factory,
-                    pre_factory: pool.pre_factory,
+                    pre_factory: Some(pool.pre_factory),
                     curve_percentage: pool.curve_percentage,
                     volume_quote: row.get::<Decimal, _>("buy_volume")
                         + row.get::<Decimal, _>("sell_volume"),
@@ -444,7 +434,7 @@ impl DbService {
 
     pub async fn get_last_transaction(
         &self,
-        pool_address: Vec<u8>,
+        pool_address: String,
     ) -> Result<Option<Swap>, sqlx::Error> {
         let query = r#"
             SELECT * FROM swaps
@@ -465,7 +455,7 @@ impl DbService {
 
     pub async fn get_pool_report(
         &self,
-        pool_address: Vec<u8>,
+        pool_address: String,
         report_type: ReportType,
     ) -> Result<Option<Vec<PoolReport>>, sqlx::Error> {
         let (table_suffix, interval_literal) = match report_type {
@@ -510,7 +500,7 @@ CASE
                 let mut pool_reports = Vec::new();
                 for row in rows {
                     let pool_report = PoolReport {
-                        pool_address: bs58::encode(&pool_address).into_string(),
+                        pool_address: row.get("pool_address"),
                         bucket_start: row.get("bucket_start"),
                         buy_volume: row.get("buy_volume"),
                         buy_count: row.get("buy_count"),
@@ -537,10 +527,10 @@ CASE
 
     pub async fn get_pool_swaps(
         &self,
-        pool_address: Vec<u8>,
+        pool_address: String,
         start_date: Option<DateTime<Utc>>,
         end_date: Option<DateTime<Utc>>,
-    ) -> Result<Vec<ResponseSwap>, sqlx::Error> {
+    ) -> Result<Vec<DBSwap>, sqlx::Error> {
         let query = r#"
     SELECT * FROM swaps
     WHERE pool_address = $1
@@ -559,11 +549,11 @@ CASE
             Ok(swaps) => {
                 let mut response_swaps = Vec::new();
                 for swap in swaps {
-                    response_swaps.push(ResponseSwap::try_from(swap).unwrap());
+                    response_swaps.push(DBSwap::try_from(swap).unwrap());
                 }
                 Ok(response_swaps
                     .into_iter()
-                    .map(|swap: ResponseSwap| ResponseSwap::try_from(swap).unwrap())
+                    .map(|swap: DBSwap| DBSwap::try_from(swap).unwrap())
                     .collect())
             }
             Err(e) => {
@@ -573,7 +563,7 @@ CASE
         }
     }
 
-    pub async fn get_pair_info(&self, pool_address: Vec<u8>) -> Result<PairInfo, sqlx::Error> {
+    pub async fn get_pair_info(&self, pool_address: String) -> Result<PairInfo, sqlx::Error> {
         let query = r#"
         SELECT 
             pools.*, 
@@ -603,13 +593,13 @@ CASE
 
         let pair_info = PairInfo {
             pool: DBPool {
-                pool_address: row.try_get::<Vec<u8>, _>("pool_address")?,
-                pool_base_address: row.try_get::<Vec<u8>, _>("pool_base_address")?,
-                pool_quote_address: row.try_get::<Vec<u8>, _>("pool_quote_address")?,
-                token_base_address: row.try_get::<Vec<u8>, _>("pool_quote_address")?,
-                token_quote_address: row.try_get::<Vec<u8>, _>("token_quote_address")?,
-                creator: row.try_get::<Vec<u8>, _>("creator")?,
-                hash: row.try_get::<Vec<u8>, _>("hash")?,
+                pool_address: row.try_get::<String, _>("pool_address")?,
+                pool_base_address: row.try_get::<String, _>("pool_base_address")?,
+                pool_quote_address: row.try_get::<String, _>("pool_quote_address")?,
+                token_base_address: row.try_get::<String, _>("pool_quote_address")?,
+                token_quote_address: row.try_get::<String, _>("token_quote_address")?,
+                creator: row.try_get::<String, _>("creator")?,
+                hash: row.try_get::<String, _>("hash")?,
                 initial_token_base_reserve: row
                     .try_get::<Decimal, _>("initial_token_base_reserve")?,
                 initial_token_quote_reserve: row
@@ -624,7 +614,7 @@ CASE
                 metadata: row.try_get::<Option<Value>, _>("metadata")?,
             },
             base_token: DBToken {
-                mint_address: row.try_get::<Vec<u8>, _>("mint_address")?,
+                mint_address: row.try_get::<String, _>("mint_address")?,
                 name: row.try_get("name")?,
                 symbol: row.try_get("symbol")?,
                 decimals: row.try_get::<i16, _>("decimals")?,
@@ -633,12 +623,12 @@ CASE
                 slot: row.try_get("slot")?,
                 mint_authority: row.try_get("mint_authority")?,
                 freeze_authority: row.try_get("freeze_authority")?,
-                hash: row.try_get::<Vec<u8>, _>("token_hash")?,
+                hash: row.try_get::<String, _>("token_hash")?,
                 image: row.try_get("image")?,
                 twitter: row.try_get("twitter")?,
                 telegram: row.try_get("telegram")?,
                 website: row.try_get("website")?,
-                program_id: row.try_get::<Vec<u8>, _>("program_id")?,
+                program_id: row.try_get::<String, _>("program_id")?,
             },
         };
         Ok(pair_info)
@@ -646,7 +636,7 @@ CASE
 
     pub async fn get_top_traders(
         &self,
-        pool_address: Vec<u8>,
+        pool_address: String,
     ) -> Result<Vec<TopTrader>, sqlx::Error> {
         let query = r#"
         WITH first_swap AS (
@@ -681,7 +671,7 @@ CASE
                 let mut top_traders = Vec::new();
                 for swap in swaps {
                     top_traders.push(TopTrader {
-                        creator: bs58::encode(&swap.get::<Vec<u8>, _>("creator")).into_string(),
+                        creator: swap.get::<String, _>("creator"),
                         base_bought: swap.get("base_bought"),
                         base_sold: swap.get("base_sold"),
                         quote_bought: swap.get("quote_bought"),
@@ -698,7 +688,7 @@ CASE
         }
     }
 
-    pub async fn get_holders(&self, mint: Vec<u8>) -> Result<Vec<HolderResponse>, sqlx::Error> {
+    pub async fn get_holders(&self, mint: String) -> Result<Vec<HolderResponse>, sqlx::Error> {
         let query = r#"
         SELECT 
             a.*, 
@@ -716,13 +706,13 @@ CASE
                 let mut holder_responses = Vec::new();
                 for holder in holders {
                     holder_responses.push(HolderResponse {
-                        address: bs58::encode(&holder.try_get::<Vec<u8>, _>("owner")?)
-                            .into_string(),
-                        account: bs58::encode(&holder.try_get::<Vec<u8>, _>("account")?)
-                            .into_string(),
+                        address: holder.try_get::<String, _>("owner")?
+                            ,
+                        account: holder.try_get::<String, _>("account")?
+                            ,
                         amount: Decimal::from_f64(holder.try_get::<f64, _>("normalized_amount")?)
                             .unwrap(),
-                        mint: bs58::encode(&mint).into_string(),
+                        mint: holder.try_get::<String, _>("mint")?,
                         state: holder.try_get::<DBAccountState, _>("state")?,
                         delegated_amount: holder.try_get::<Decimal, _>("delegated_amount")?,
                     });
@@ -738,7 +728,7 @@ CASE
 
     pub async fn get_candlestick(
         &self,
-        pool_address: Vec<u8>,
+        pool_address: String,
         interval: String,
         start_time: DateTime<Utc>,
         end_time: DateTime<Utc>,
@@ -805,7 +795,7 @@ CASE
     }
     pub async fn get_batch_pool_data(
         &self,
-        pool_addresses: &[Vec<u8>],
+        pool_addresses: &[String],
     ) -> Result<Vec<PulseDataResponse>, sqlx::Error> {
         let pool_hex_strings: Vec<String> = pool_addresses
             .iter()
@@ -814,7 +804,7 @@ CASE
 
         let query = r#"
             WITH target_pools AS (
-                SELECT unnest($1::bytea[]) AS pool_address
+                SELECT unnest($1) AS pool_address
             ),
             all_pools AS (
                 SELECT
@@ -1035,15 +1025,15 @@ LEFT JOIN migration        m  ON m.creator       = r.creator;
             let market_cap_sol = calculate_market_cap(current_price, token_supply);
 
             let pulse_data: PulseDataResponse = PulseDataResponse {
-                pair_address: bs58::encode(pool.get::<Vec<u8>, _>("pool_address")).into_string(),
+                pair_address: pool.get::<String, _>("pool_address"),
                 liquidity_sol: pool.try_get::<Decimal, _>("liquidity_sol")?,
                 liquidity_token: pool.try_get::<Decimal, _>("liquidity_token")?,
-                token_address: bs58::encode(pool.get::<Vec<u8>, _>("mint_address")).into_string(),
+                token_address: pool.get::<String, _>("mint_address"),
                 bonding_curve_percent: pool.try_get::<Decimal, _>("bonding_curve_percent")?,
                 token_name: pool.try_get("name")?,
                 token_symbol: pool.try_get("symbol")?,
                 token_decimals: pool.try_get::<i16, _>("decimals")? as u8, // Fix type mismatch
-                creator: bs58::encode(pool.try_get::<Vec<u8>, _>("creator")?).into_string(),
+                creator: pool.try_get::<String, _>("creator")?,
                 protocol: pool.try_get("factory")?,
                 website: pool.try_get("website")?,
                 twitter: pool.try_get("twitter")?,
@@ -1062,15 +1052,14 @@ LEFT JOIN migration        m  ON m.creator       = r.creator;
                 supply: pool.try_get("token_supply")?,
                 token_image: pool.try_get("image")?,
                 dev_wallet_funding: if let Some(funding_wallet) =
-                    pool.try_get::<Option<Vec<u8>>, _>("funding_wallet_address")?
+                    pool.try_get::<Option<String>, _>("funding_wallet_address")?
                 {
                     Some(DevWalletFunding {
-                        funding_wallet_address: bs58::encode(funding_wallet).into_string(),
-                        wallet_address: bs58::encode(pool.try_get::<Vec<u8>, _>("wallet_address")?)
-                            .into_string(),
+                        funding_wallet_address: funding_wallet,
+                        wallet_address: pool.try_get::<String, _>("wallet_address")?
+                            ,
                         amount_sol: pool.try_get("amount_sol")?,
-                        hash: bs58::encode(pool.try_get::<Vec<u8>, _>("transfer_hash")?)
-                            .into_string(),
+                        hash: pool.try_get::<String, _>("transfer_hash")?,
                         funded_at: pool.try_get::<DateTime<Utc>, _>("funded_at")?,
                     })
                 } else {
@@ -1082,7 +1071,7 @@ LEFT JOIN migration        m  ON m.creator       = r.creator;
         Ok(data)
     }
 
-    pub async fn get_token_info(&self, pool_address: Vec<u8>) -> Result<TokenInfo, sqlx::Error> {
+    pub async fn get_token_info(&self, pool_address: String) -> Result<TokenInfo, sqlx::Error> {
         let query = r#"
         WITH pool_info AS (
           SELECT p.pool_address, p.token_base_address, p.creator,
@@ -1194,8 +1183,8 @@ LEFT JOIN migration        m  ON m.creator       = r.creator;
 
     pub async fn get_trader_details(
         &self,
-        creator: Vec<u8>,
-        pool_address: Vec<u8>,
+        creator: String,
+        pool_address: String,
     ) -> Result<TopTrader, sqlx::Error> {
         let query = r#"
 SELECT
@@ -1222,7 +1211,7 @@ GROUP BY s.creator;
         Ok(TopTrader {
             base_bought: row.try_get::<Decimal, _>("base_bought")?,
             base_sold: row.try_get::<Decimal, _>("base_sold")?,
-            creator: bs58::encode(row.try_get::<Vec<u8>, _>("creator")?).into_string(),
+            creator: row.try_get::<String, _>("creator")?,
             is_sniper: row.try_get::<bool, _>("is_sniper")?,
             quote_bought: row.try_get::<Decimal, _>("quote_bought")?,
             quote_sold: row.try_get::<Decimal, _>("quote_sold")?,

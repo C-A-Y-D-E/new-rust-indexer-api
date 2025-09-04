@@ -1,3 +1,5 @@
+use std::str::FromStr;
+
 use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive;
 use serde::{Deserialize, Serialize};
@@ -48,16 +50,16 @@ pub struct Account {
 
 #[derive(FromRow, Serialize, Deserialize)]
 pub struct DBTokenAccount {
-    pub mint: Vec<u8>,
-    pub owner: Vec<u8>,
+    pub mint: String,
+    pub owner: String,
     pub amount: Decimal,
-    pub delegate: Option<Vec<u8>>,
+    pub delegate: Option<String>,
     pub state: DBAccountState,
     pub is_native: Option<Decimal>,
     pub delegated_amount: Decimal,
-    pub close_authority: Option<Vec<u8>>,
-    pub account: Vec<u8>,
-    pub program: Vec<u8>,
+    pub close_authority: Option<String>,
+    pub account: String,
+    pub program: String,
 }
 
 #[derive(FromRow, Serialize, Deserialize)]
@@ -74,19 +76,19 @@ pub struct HolderResponse {
 impl From<Account> for DBTokenAccount {
     fn from(account: Account) -> Self {
         DBTokenAccount {
-            mint: account.mint.to_bytes().to_vec(),
-            owner: account.owner.to_bytes().to_vec(),
-            account: account.account.to_bytes().to_vec(),
+            mint: account.mint.to_string(),
+            owner: account.owner.to_string(),
+            account: account.account.to_string(),
             amount: Decimal::from(account.amount),
-            delegate: account.delegate.map(|d| d.to_bytes().to_vec()).into(),
+            delegate: account.delegate.map(|d| d.to_string()).into(),
             state: account.state,
             is_native: account.is_native.map(Decimal::from).into(),
             delegated_amount: Decimal::from(account.delegated_amount),
             close_authority: account
                 .close_authority
-                .map(|ca| ca.to_bytes().to_vec())
+                .map(|ca| ca.to_string())
                 .into(),
-            program: account.program.to_bytes().to_vec(),
+            program: account.program.to_string(),
         }
     }
 }
@@ -96,13 +98,13 @@ impl TryFrom<DBTokenAccount> for Account {
 
     fn try_from(db_token: DBTokenAccount) -> Result<Self, Self::Error> {
         Ok(Self {
-            mint: Pubkey::try_from(db_token.mint).map_err(|_| "parse mint".to_string())?,
-            owner: Pubkey::try_from(db_token.owner).map_err(|_| "parse owner".to_string())?,
+            mint: Pubkey::from_str(&db_token.mint).map_err(|_| "parse mint".to_string())?,
+            owner: Pubkey::from_str(&db_token.owner).map_err(|_| "parse owner".to_string())?,
             amount: db_token.amount.to_u64().ok_or("amount to u64")?,
             delegate: db_token
                 .delegate
                 .map(|d| {
-                    Pubkey::try_from(d)
+                    Pubkey::from_str(&d)
                         .map_err(|_| "parse delegate".to_string())
                         .expect("Failed to parse delegate")
                 })
@@ -119,15 +121,15 @@ impl TryFrom<DBTokenAccount> for Account {
             close_authority: db_token
                 .close_authority
                 .map(|ca| {
-                    Pubkey::try_from(ca)
+                    Pubkey::from_str(&ca)
                         .map_err(|_| "parse close authority".to_string())
                         .expect("Failed to parse close authority")
                 })
                 .into(),
-            account: Pubkey::try_from(db_token.account)
+            account: Pubkey::from_str(&db_token.account)
                 .map_err(|_| "parse account".to_string())
                 .expect("Failed to parse account"),
-            program: Pubkey::try_from(db_token.program)
+            program: Pubkey::from_str(&db_token.program)
                 .map_err(|_| "parse program".to_string())
                 .expect("Failed to parse program"),
         })
@@ -139,10 +141,10 @@ impl TryFrom<DBTokenAccount> for HolderResponse {
 
     fn try_from(db_token: DBTokenAccount) -> Result<Self, Self::Error> {
         Ok(Self {
-            address: bs58::encode(&db_token.owner).into_string(),
-            account: bs58::encode(&db_token.account).into_string(),
+            address: db_token.owner,
+            account: db_token.account,
             amount: db_token.amount,
-            mint: bs58::encode(&db_token.mint).into_string(),
+            mint: db_token.mint,
             state: db_token.state,
             delegated_amount: db_token.delegated_amount,
         })

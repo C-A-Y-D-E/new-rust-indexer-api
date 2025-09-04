@@ -1,3 +1,5 @@
+use std::str::FromStr;
+
 use axum::{
     Json,
     extract::{Path, Query, State},
@@ -7,7 +9,7 @@ use chrono::{DateTime, Duration, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use spl_token::solana_program::pubkey::Pubkey;
-use tracing::error;
+use tracing::{error, warn};
 
 use crate::services::db::DbService;
 
@@ -29,7 +31,11 @@ pub async fn get_trades(
     db: State<DbService>,
     Query(params): Query<GetTradesParams>,
 ) -> Result<Json<serde_json::Value>, axum::http::StatusCode> {
-    let pool_address = Pubkey::from_str_const(&params.pool_address);
+
+    let pool_address = Pubkey::from_str(&params.pool_address).map_err(|e| {
+        warn!(?e, "failed to encode pool_address in get_trader_details");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
     let mut start_date = match params.start_date.as_deref() {
         Some(s) => Some(parse_ymd_to_utc(s)?),
         None => None,
@@ -46,7 +52,7 @@ pub async fn get_trades(
         end_date = Some(now);
     }
     let trades = db
-        .get_pool_swaps(pool_address.to_bytes().to_vec(), start_date, end_date)
+        .get_pool_swaps(pool_address.to_string(), start_date, end_date)
         .await;
 
     match trades {

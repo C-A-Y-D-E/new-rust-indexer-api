@@ -44,7 +44,7 @@ pub async fn get_last_transaction(
     })?;
 
     let last_transaction = db
-        .get_last_transaction(pool_address.to_bytes().to_vec())
+        .get_last_transaction(pool_address.to_string())
         .await;
     match last_transaction {
         Ok(Some(swap)) => {

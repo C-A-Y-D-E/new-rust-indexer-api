@@ -11,7 +11,7 @@ use sqlx::{PgPool, Row};
 use tracing::info;
 
 use crate::{
-    models::pool::{DBPool, Pool, ResponsePool},
+    models::pool::{DBPool, Pool},
     services::db::DbService,
     types::{
         filter::{PulseFilter, PulseTable},
@@ -472,17 +472,15 @@ LEFT JOIN migration        m  ON m.creator       = r.creator
                     pool.get::<Decimal, _>("token_supply"),
                 );
                 let pulse_data: PulseDataResponse = PulseDataResponse {
-                    pair_address: bs58::encode(pool.get::<Vec<u8>, _>("pool_address"))
-                        .into_string(),
+                    pair_address: pool.get::<String, _>("pool_address"),
                     liquidity_sol: pool.get::<Decimal, _>("liquidity_sol"),
                     liquidity_token: pool.get("liquidity_token"),
-                    token_address: bs58::encode(pool.get::<Vec<u8>, _>("mint_address"))
-                        .into_string(),
+                    token_address: pool.get::<String, _>("mint_address"),
                     bonding_curve_percent: pool.get::<Decimal, _>("bonding_curve_percent"),
                     token_name: pool.get("name"),
                     token_symbol: pool.get("symbol"),
                     token_decimals: pool.get::<i16, _>("decimals") as u8,
-                    creator: bs58::encode(pool.get::<Vec<u8>, _>("creator")).into_string(),
+                    creator: pool.get::<String, _>("creator"),
                     protocol: pool.get("factory"),
                     website: pool.get("website"),
                     twitter: pool.get("twitter"),
@@ -502,15 +500,13 @@ LEFT JOIN migration        m  ON m.creator       = r.creator
                     supply: pool.get("token_supply"),
                     token_image: pool.get("image"),
                     dev_wallet_funding: if let Some(funding_wallet) =
-                        pool.get::<Option<Vec<u8>>, _>("funding_wallet_address")
+                        pool.get::<Option<String>, _>("funding_wallet_address")
                     {
                         Some(DevWalletFunding {
-                            funding_wallet_address: bs58::encode(funding_wallet).into_string(),
-                            wallet_address: bs58::encode(pool.get::<Vec<u8>, _>("wallet_address"))
-                                .into_string(),
+                            funding_wallet_address: funding_wallet,
+                            wallet_address: pool.get::<String, _>("wallet_address"),
                             amount_sol: pool.get("amount_sol"),
-                            hash: bs58::encode(pool.get::<Vec<u8>, _>("transfer_hash"))
-                                .into_string(),
+                            hash: pool.get::<String, _>("transfer_hash"),
                             funded_at: pool.get::<DateTime<Utc>, _>("funded_at"),
                         })
                     } else {
@@ -962,17 +958,15 @@ LEFT JOIN migration        m  ON m.creator       = r.creator
                     pool.get::<Decimal, _>("token_supply"),
                 );
                 let pulse_data: PulseDataResponse = PulseDataResponse {
-                    pair_address: bs58::encode(pool.get::<Vec<u8>, _>("pool_address"))
-                        .into_string(),
+                    pair_address: pool.get::<String, _>("pool_address"),
                     liquidity_sol: pool.get::<Decimal, _>("liquidity_sol"),
                     liquidity_token: pool.get("liquidity_token"),
-                    token_address: bs58::encode(pool.get::<Vec<u8>, _>("mint_address"))
-                        .into_string(),
+                    token_address: pool.get::<String, _>("mint_address"),
                     bonding_curve_percent: pool.get::<Decimal, _>("bonding_curve_percent"),
                     token_name: pool.get("name"),
                     token_symbol: pool.get("symbol"),
                     token_decimals: pool.get::<i16, _>("decimals") as u8,
-                    creator: bs58::encode(pool.get::<Vec<u8>, _>("creator")).into_string(),
+                    creator: pool.get::<String, _>("creator"),
                     protocol: pool.get("factory"),
                     website: pool.get("website"),
                     twitter: pool.get("twitter"),
@@ -992,15 +986,13 @@ LEFT JOIN migration        m  ON m.creator       = r.creator
                     supply: pool.get("token_supply"),
                     token_image: pool.get("image"),
                     dev_wallet_funding: if let Some(funding_wallet) =
-                        pool.get::<Option<Vec<u8>>, _>("funding_wallet_address")
+                        pool.get::<Option<String>, _>("funding_wallet_address")
                     {
                         Some(DevWalletFunding {
-                            funding_wallet_address: bs58::encode(funding_wallet).into_string(),
-                            wallet_address: bs58::encode(pool.get::<Vec<u8>, _>("wallet_address"))
-                                .into_string(),
+                            funding_wallet_address: funding_wallet,
+                            wallet_address: pool.get::<String, _>("wallet_address"),
                             amount_sol: pool.get("amount_sol"),
-                            hash: bs58::encode(pool.get::<Vec<u8>, _>("transfer_hash"))
-                                .into_string(),
+                            hash: pool.get::<String, _>("transfer_hash"),
                             funded_at: pool.get::<DateTime<Utc>, _>("funded_at"),
                         })
                     } else {
@@ -1444,17 +1436,15 @@ LEFT JOIN migration        m  ON m.creator       = r.creator
                     pool.get::<Decimal, _>("token_supply"),
                 );
                 let pulse_data: PulseDataResponse = PulseDataResponse {
-                    pair_address: bs58::encode(pool.get::<Vec<u8>, _>("pool_address"))
-                        .into_string(),
+                    pair_address: pool.get::<String, _>("pool_address"),
                     liquidity_sol: pool.get::<Decimal, _>("liquidity_sol"),
                     liquidity_token: pool.get("liquidity_token"),
-                    token_address: bs58::encode(pool.get::<Vec<u8>, _>("mint_address"))
-                        .into_string(),
+                    token_address: pool.get::<String, _>("mint_address"),
                     bonding_curve_percent: pool.get::<Decimal, _>("bonding_curve_percent"),
                     token_name: pool.get("name"),
                     token_symbol: pool.get("symbol"),
                     token_decimals: pool.get::<i16, _>("decimals") as u8,
-                    creator: bs58::encode(pool.get::<Vec<u8>, _>("creator")).into_string(),
+                    creator: pool.get::<String, _>("creator"),
                     protocol: pool.get("factory"),
                     website: pool.get("website"),
                     twitter: pool.get("twitter"),
@@ -1474,15 +1464,13 @@ LEFT JOIN migration        m  ON m.creator       = r.creator
                     supply: pool.get("token_supply"),
                     token_image: pool.get("image"),
                     dev_wallet_funding: if let Some(funding_wallet) =
-                        pool.get::<Option<Vec<u8>>, _>("funding_wallet_address")
+                        pool.get::<Option<String>, _>("funding_wallet_address")
                     {
                         Some(DevWalletFunding {
-                            funding_wallet_address: bs58::encode(funding_wallet).into_string(),
-                            wallet_address: bs58::encode(pool.get::<Vec<u8>, _>("wallet_address"))
-                                .into_string(),
+                            funding_wallet_address: funding_wallet,
+                            wallet_address: pool.get::<String, _>("wallet_address"),
                             amount_sol: pool.get("amount_sol"),
-                            hash: bs58::encode(pool.get::<Vec<u8>, _>("transfer_hash"))
-                                .into_string(),
+                            hash: pool.get::<String, _>("transfer_hash"),
                             funded_at: pool.get::<DateTime<Utc>, _>("funded_at"),
                         })
                     } else {

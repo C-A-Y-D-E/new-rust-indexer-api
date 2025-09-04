@@ -16,18 +16,18 @@ use chrono::Duration as ChronoDuration;
 #[derive(Clone)]
 
 pub struct PoolInfo {
-    pub pool_address: Vec<u8>,
-    pub token_base_address: Vec<u8>,
-    pub token_quote_address: Vec<u8>,
-    pub pool_base_address: Vec<u8>,
-    pub pool_quote_address: Vec<u8>,
+    pub pool_address: String,
+    pub token_base_address: String,
+    pub token_quote_address: String,
+    pub pool_base_address: String,
+    pub pool_quote_address: String,
     pub curve_percentage: Option<Decimal>,
     pub factory: String,
     pub created_at: DateTime<Utc>,
 }
 pub struct PoolManager {
     pools: Vec<DBPool>,
-    buffer: Vec<Vec<u8>>,
+    buffer: Vec<String>,
     batch_size: usize,
     last_flush: Instant,
     flush_interval: Duration,
@@ -37,7 +37,7 @@ impl PoolManager {
     pub fn new(pools: Vec<DBPool>) -> Self {
         Self {
             pools,
-            buffer: Vec::<Vec<u8>>::new(),
+            buffer: Vec::<String>::new(),
             batch_size: 100, // Flush after 10 pool addresses or every 1 seconds
             last_flush: Instant::now(),
             flush_interval: Duration::from_secs(1),
@@ -50,7 +50,7 @@ impl PoolManager {
         self.pools.push(pool);
     }
 
-    pub async fn verify_and_add_pool(&mut self, pool_address: Vec<u8>) -> Option<Vec<Vec<u8>>> {
+    pub async fn verify_and_add_pool(&mut self, pool_address: String) -> Option<Vec<String>> {
         // Check if pool is already in the buffer
         if self.buffer.contains(&pool_address) {
             // println!("Pool already in buffer");
@@ -72,9 +72,9 @@ impl PoolManager {
         self.buffer.len() >= self.batch_size
             || (!self.buffer.is_empty() && self.last_flush.elapsed() >= self.flush_interval)
     }
-    async fn flush_and_process(&mut self) -> Option<Vec<Vec<u8>>> {
+    async fn flush_and_process(&mut self) -> Option<Vec<String>> {
         if !self.buffer.is_empty() {
-            let batch: Vec<Vec<u8>> = std::mem::take(&mut self.buffer);
+            let batch: Vec<String> = std::mem::take(&mut self.buffer);
             self.last_flush = Instant::now();
             Some(batch)
         } else {

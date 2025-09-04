@@ -1,7 +1,7 @@
 use crate::{
     models::{
-        pool::{DBPool, ResponsePool},
-        swap::{DBSwap, ResponseSwap},
+        pool::{DBPool, },
+        swap::{DBSwap, },
     },
     routes::{
         get_candlestick::get_candlestick, get_holders::get_holders, get_pair_info::get_pair_info,

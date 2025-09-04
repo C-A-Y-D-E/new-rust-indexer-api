@@ -1,3 +1,5 @@
+use std::str::FromStr;
+
 use axum::{
     Json,
     extract::{Query, State},
@@ -5,7 +7,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use tracing::error;
+use tracing::{error, warn};
 
 use crate::{
     defaults::{SOL_TOKEN, USDC_TOKEN},
@@ -29,8 +31,12 @@ pub async fn search_pools(
 ) -> Result<Json<serde_json::Value>, axum::http::StatusCode> {
     let search_term = query.search.trim_matches('"');
     if search_term.len() == 44 {
-        let pool_address = Pubkey::from_str_const(search_term).to_bytes().to_vec();
-        let pool_and_token_data = data.get_pool_and_token_data(pool_address).await;
+        // let pool_address = Pubkey::from_str_const(search_term).to_bytes().to_vec();
+        let pool_address = Pubkey::from_str(&search_term).map_err(|_| {
+         
+            StatusCode::BAD_REQUEST
+        })?;
+        let pool_and_token_data = data.get_pool_and_token_data(pool_address.to_string()).await;
         match pool_and_token_data {
             Ok(pool_and_token_data) => Ok(Json(json!({ "data": pool_and_token_data }))),
 
@@ -46,7 +52,7 @@ pub async fn search_pools(
                 let mut results = Vec::new();
                 for token in tokens {
                     let pool_and_token_data = data
-                        .get_pool_and_token_data(token.mint_address.to_bytes().to_vec())
+                        .get_pool_and_token_data(token.mint_address.to_string())
                         .await;
                     match pool_and_token_data {
                         Ok(pool_and_token_data) => results.push(pool_and_token_data),

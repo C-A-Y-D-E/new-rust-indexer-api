@@ -34,7 +34,7 @@ pub async fn get_candlestick(
     let limit = query.limit;
     let candles = db
         .get_candlestick(
-            pool_address.to_bytes().to_vec(),
+            pool_address.to_string(),
             interval,
             start_time,
             end_time,

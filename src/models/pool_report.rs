@@ -5,7 +5,7 @@ use sqlx::prelude::FromRow;
 
 #[derive(Debug, FromRow)]
 pub struct PoolReport {
-    pub pool_address: Vec<u8>,
+    pub pool_address: String,
     pub bucket_start: DateTime<Utc>,
     // Buy metrics
     pub buy_volume: Decimal,

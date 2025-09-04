@@ -20,7 +20,7 @@ pub async fn get_token_info(
         StatusCode::BAD_REQUEST
     })?;
 
-    let token_info = db.get_token_info(pool_address.to_bytes().to_vec()).await;
+    let token_info = db.get_token_info(pool_address.to_string()).await;
     match token_info {
         Ok(token_info) => Ok(Json(json!(token_info))),
         Err(_e) => Err(axum::http::StatusCode::INTERNAL_SERVER_ERROR),

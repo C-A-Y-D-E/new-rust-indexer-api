@@ -1,3 +1,5 @@
+use std::str::FromStr;
+
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
@@ -56,49 +58,33 @@ pub struct Swap {
 #[derive(Debug, FromRow, Serialize, Deserialize, Clone)]
 
 pub struct DBSwap {
-    pub creator: Vec<u8>,
-    pub pool_address: Vec<u8>,
-    pub base_reserve: Decimal,
-    pub quote_reserve: Decimal,
-    pub price_sol: Decimal,
-    pub swap_type: SwapType,
-    pub hash: Vec<u8>,
-
-    pub base_amount: Decimal,
-    pub quote_amount: Decimal,
-    pub slot: i64,
-    pub created_at: DateTime<Utc>,
-    // pub updated_at: DateTime<Utc>,
-}
-
-#[derive(Debug, FromRow, Serialize, Deserialize)]
-
-pub struct ResponseSwap {
     pub creator: String,
     pub pool_address: String,
-    pub swap_type: SwapType,
-    pub hash: String,
     pub base_reserve: Decimal,
     pub quote_reserve: Decimal,
     pub price_sol: Decimal,
+    pub swap_type: SwapType,
+    pub hash: String,
+
     pub base_amount: Decimal,
     pub quote_amount: Decimal,
     pub slot: i64,
     pub created_at: DateTime<Utc>,
     // pub updated_at: DateTime<Utc>,
 }
+
 
 impl From<Swap> for DBSwap {
     fn from(swap: Swap) -> Self {
         Self {
-            creator: swap.creator.to_bytes().to_vec(),
-            pool_address: swap.pool_address.to_bytes().to_vec(),
+            creator: swap.creator.to_string(),
+            pool_address: swap.pool_address.to_string(),
 
             base_reserve: Decimal::from(swap.base_reserve),
             quote_reserve: Decimal::from(swap.quote_reserve),
             price_sol: Decimal::from(swap.price_sol),
             swap_type: swap.swap_type,
-            hash: swap.hash.as_ref().to_vec(),
+            hash: swap.hash.to_string(),
             base_amount: Decimal::from(swap.base_amount),
             quote_amount: Decimal::from(swap.quote_amount),
             slot: swap.slot as i64,
@@ -113,15 +99,15 @@ impl TryFrom<DBSwap> for Swap {
 
     fn try_from(db_swap: DBSwap) -> Result<Self, Self::Error> {
         Ok(Self {
-            creator: Pubkey::try_from(db_swap.creator).map_err(|_| "parse creator".to_string())?,
-            pool_address: Pubkey::try_from(db_swap.pool_address)
+            creator: Pubkey::from_str(&db_swap.creator).map_err(|_| "parse creator".to_string())?,
+            pool_address: Pubkey::from_str(&db_swap.pool_address)
                 .map_err(|_| "parse pool address".to_string())?,
 
             price_sol: db_swap.price_sol,
             base_reserve: db_swap.base_reserve,
             quote_reserve: db_swap.quote_reserve,
             swap_type: db_swap.swap_type,
-            hash: Signature::try_from(db_swap.hash).map_err(|_| "parse hash".to_string())?,
+            hash: Signature::from_str(&db_swap.hash).map_err(|_| "parse hash".to_string())?,
             base_amount: db_swap.base_amount,
             quote_amount: db_swap.quote_amount,
             slot: db_swap.slot as u64,
@@ -131,43 +117,4 @@ impl TryFrom<DBSwap> for Swap {
     }
 }
 
-impl TryFrom<DBSwap> for ResponseSwap {
-    type Error = String;
 
-    fn try_from(db_swap: DBSwap) -> Result<Self, Self::Error> {
-        Ok(Self {
-            creator: bs58::encode(db_swap.creator).into_string(),
-            pool_address: bs58::encode(db_swap.pool_address).into_string(),
-
-            price_sol: db_swap.price_sol,
-            base_reserve: db_swap.base_reserve,
-            quote_reserve: db_swap.quote_reserve,
-            swap_type: db_swap.swap_type,
-            hash: bs58::encode(db_swap.hash).into_string(),
-            base_amount: db_swap.base_amount,
-            quote_amount: db_swap.quote_amount,
-            slot: db_swap.slot,
-            created_at: db_swap.created_at,
-            // updated_at: db_swap.updated_at,
-        })
-    }
-}
-
-impl From<ResponseSwap> for DBSwap {
-    fn from(swap: ResponseSwap) -> Self {
-        Self {
-            creator: hex::decode(swap.creator).unwrap(),
-            pool_address: hex::decode(swap.pool_address).unwrap(),
-            base_reserve: swap.base_reserve,
-            quote_reserve: swap.quote_reserve,
-            price_sol: swap.price_sol,
-            swap_type: swap.swap_type,
-            hash: hex::decode(swap.hash).unwrap(),
-            base_amount: swap.base_amount,
-            quote_amount: swap.quote_amount,
-            slot: swap.slot,
-            created_at: swap.created_at,
-            // updated_at: swap.updated_at,
-        }
-    }
-}

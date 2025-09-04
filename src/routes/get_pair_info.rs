@@ -11,7 +11,7 @@ use tracing::{debug, info, warn};
 
 use crate::{
     defaults::{SOL_TOKEN, USDC_TOKEN},
-    models::{pool::ResponsePool, token::ResponseToken},
+    models::{pool::DBPool, token::DBToken},
     services::db::DbService,
 };
 
@@ -23,16 +23,16 @@ pub async fn get_pair_info(
         warn!("failed to parse pool address from token_info {}", address);
         StatusCode::BAD_REQUEST
     })?;
-    let pair_info = db.get_pair_info(pool_address.to_bytes().to_vec()).await;
+    let pair_info = db.get_pair_info(pool_address.to_string()).await;
 
     match pair_info {
         Ok(pair_info) => {
-            let pool: ResponsePool = ResponsePool::try_from(pair_info.pool).map_err(|e| {
+            let pool: DBPool = DBPool::try_from(pair_info.pool).map_err(|e| {
                 warn!(?e, "failed to convert pool");
                 StatusCode::INTERNAL_SERVER_ERROR
             })?;
 
-            let base_token = ResponseToken::try_from(pair_info.base_token)
+            let base_token = DBToken::try_from(pair_info.base_token)
                 .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
             let quote_token = {
