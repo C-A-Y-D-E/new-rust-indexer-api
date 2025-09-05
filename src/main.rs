@@ -1,8 +1,5 @@
 use crate::{
-    models::{
-        pool::{DBPool, },
-        swap::{DBSwap, },
-    },
+    models::{pool::DBPool, swap::DBSwap},
     routes::{
         get_candlestick::get_candlestick, get_holders::get_holders, get_pair_info::get_pair_info,
         get_token_info::get_token_info, get_top_traders::get_top_traders,
@@ -77,28 +74,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
             }
-            // if notification.channel() == "swap_inserted" {
-            //     let raw_notification =
-            //         serde_json::from_str::<ResponseSwap>(notification.payload()).unwrap();
-            //     let swap = DBSwap::from(raw_notification);
-            //     let r = ResponseSwap::try_from(swap.clone()).unwrap();
-            //     // println!("raw_notification: {:?}", swap);
-            //     let _ = io_clone.emit(format!("s:{}", r.pool_address), &r).await;
-            //     let pool_address = swap.pool_address;
-            //     let batch = pool_manager.verify_and_add_pool(pool_address).await;
+            if notification.channel() == "swap_inserted" {
+                let raw_notification =
+                    serde_json::from_str::<DBSwap>(notification.payload()).unwrap();
+                let swap = DBSwap::from(raw_notification);
+                let r = DBSwap::try_from(swap.clone()).unwrap();
+                // println!("raw_notification: {:?}", swap);
+                let _ = io_clone.emit(format!("s:{}", r.pool_address), &r).await;
+                let pool_address = swap.pool_address;
+                let batch = pool_manager.verify_and_add_pool(pool_address).await;
 
-            //     if batch.is_some() && !batch.as_ref().unwrap().is_empty() {
-            //         let pulse_data = db_clone.get_batch_pool_data(&batch.unwrap()).await;
-            //         match pulse_data {
-            //             Ok(pulse_data) => {
-            //                 let _ = io_clone.emit("update-pulse", &pulse_data).await;
-            //             }
-            //             Err(e) => {
-            //                 println!("Error: {:?}", e);
-            //             }
-            //         }
-            //     }
-            // }
+                if batch.is_some() && !batch.as_ref().unwrap().is_empty() {
+                    let pulse_data = db_clone.get_batch_pool_data(&batch.unwrap()).await;
+                    match pulse_data {
+                        Ok(pulse_data) => {
+                            let _ = io_clone.emit("update-pulse", &pulse_data).await;
+                        }
+                        Err(e) => {
+                            println!("Error: {:?}", e);
+                        }
+                    }
+                }
+            }
         }
     });
     // Connection to the socket start
