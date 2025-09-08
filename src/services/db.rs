@@ -329,8 +329,8 @@ impl DbService {
         (SELECT base_reserve FROM swaps WHERE pool_address = pools.pool_address ORDER BY created_at DESC LIMIT 1) as base_reserve,
         (SELECT quote_reserve FROM swaps WHERE pool_address = pools.pool_address ORDER BY created_at DESC LIMIT 1) as quote_reserve,
         (SELECT price_sol FROM swaps WHERE pool_address = pools.pool_address ORDER BY created_at DESC LIMIT 1) as price_sol,
-        (SELECT buy_volume FROM swaps_24h WHERE pool_address = pools.pool_address ORDER BY bucket_start DESC LIMIT 1) as buy_volume,
-        (SELECT sell_volume FROM swaps_24h WHERE pool_address = pools.pool_address ORDER BY bucket_start DESC LIMIT 1) as sell_volume
+        COALESCE((SELECT buy_volume  FROM swaps_24h WHERE pool_address = pools.pool_address ORDER BY bucket_start DESC LIMIT 1), 0) as buy_volume,
+        COALESCE((SELECT sell_volume FROM swaps_24h WHERE pool_address = pools.pool_address ORDER BY bucket_start DESC LIMIT 1), 0) as sell_volume
     FROM pools
     JOIN tokens ON pools.token_base_address = tokens.mint_address
     WHERE pools.pool_address = $1 OR pools.token_base_address = $1
@@ -341,6 +341,7 @@ impl DbService {
             .await?;
         match pool {
             Some(row) => {
+                println!("{:?}", row);
                 let pool = DBPool {
                     pool_address: row.get::<String, _>("pool_address"),
                     factory: row.get("factory"),
