@@ -1186,17 +1186,30 @@ GROUP BY s.creator;
 "#;
         let row = sqlx::query(query)
             .bind(pool_address)
-            .bind(creator)
-            .fetch_one(&self.pool)
+            .bind(&creator)
+            .fetch_optional(&self.pool)
             .await?;
 
-        Ok(TopTrader {
-            base_bought: row.try_get::<Decimal, _>("base_bought")?,
-            base_sold: row.try_get::<Decimal, _>("base_sold")?,
-            creator: row.try_get::<String, _>("creator")?,
-            is_sniper: row.try_get::<bool, _>("is_sniper")?,
-            quote_bought: row.try_get::<Decimal, _>("quote_bought")?,
-            quote_sold: row.try_get::<Decimal, _>("quote_sold")?,
-        })
+        match row {
+            Some(row) => Ok(TopTrader {
+                base_bought: row.try_get::<Decimal, _>("base_bought")?,
+                base_sold: row.try_get::<Decimal, _>("base_sold")?,
+                creator: row.try_get::<String, _>("creator")?,
+                is_sniper: row.try_get::<bool, _>("is_sniper")?,
+                quote_bought: row.try_get::<Decimal, _>("quote_bought")?,
+                quote_sold: row.try_get::<Decimal, _>("quote_sold")?,
+            }),
+            None => {
+                // Return default values when no swaps are found for this creator-pool combination
+                Ok(TopTrader {
+                    creator: creator,
+                    base_bought: Decimal::ZERO,
+                    base_sold: Decimal::ZERO,
+                    quote_bought: Decimal::ZERO,
+                    quote_sold: Decimal::ZERO,
+                    is_sniper: false,
+                })
+            }
+        }
     }
 }
