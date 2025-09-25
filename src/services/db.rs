@@ -147,7 +147,7 @@ impl DbService {
     pub async fn init() -> Self {
         let url = env::var("DATABASE_URL").unwrap();
         let pool = PgPoolOptions::new()
-            .max_connections(5)
+            .max_connections(50)
             .connect(&url)
             .await
             .expect("failed to connect to postgres");

@@ -67,7 +67,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 match on_new_pool_event(&notification, &db_clone).await {
                     Ok(pulse_data) => {
                         let _ = io_clone.emit("new-pair", &pulse_data.0).await;
-                        pool_manager.update_pools(pulse_data.1).await;
+                        // pool_manager.update_pools(pulse_data.1).await;
                     }
                     Err(e) => {
                         println!("Error: {:?}", e);
@@ -81,20 +81,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let r = DBSwap::try_from(swap.clone()).unwrap();
                 // println!("raw_notification: {:?}", swap);
                 let _ = io_clone.emit(format!("s:{}", r.pool_address), &r).await;
-                let pool_address = swap.pool_address;
-                let batch = pool_manager.verify_and_add_pool(pool_address).await;
+                // let pool_address = swap.pool_address;
+                // let batch = pool_manager.verify_and_add_pool(pool_address).await;
 
-                if batch.is_some() && !batch.as_ref().unwrap().is_empty() {
-                    let pulse_data = db_clone.get_batch_pool_data(&batch.unwrap()).await;
-                    match pulse_data {
-                        Ok(pulse_data) => {
-                            let _ = io_clone.emit("update-pulse", &pulse_data).await;
-                        }
-                        Err(e) => {
-                            println!("Error: {:?}", e);
-                        }
-                    }
-                }
+                // if batch.is_some() && !batch.as_ref().unwrap().is_empty() {
+                //     let pulse_data = db_clone.get_batch_pool_data(&batch.unwrap()).await;
+                //     match pulse_data {
+                //         Ok(pulse_data) => {
+                //             let _ = io_clone.emit("update-pulse", &pulse_data).await;
+                //         }
+                //         Err(e) => {
+                //             println!("Error: {:?}", e);
+                //         }
+                //     }
+                // }
             }
         }
     });
