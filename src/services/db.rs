@@ -1053,6 +1053,160 @@ LEFT JOIN migration        m  ON m.creator       = r.creator;
         Ok(data)
     }
 
+    // ✅ Optimized version with better query structure
+    pub async fn get_batch_pool_data_optimized(
+        &self,
+        pool_addresses: &[String],
+    ) -> Result<Vec<PulseDataResponse>, sqlx::Error> {
+        if pool_addresses.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // ✅ Use a simpler, faster query structure
+        let pool_hex_strings: Vec<String> = pool_addresses
+            .iter()
+            .map(|addr| format!("\\x{}", hex::encode(addr)))
+            .collect();
+
+        let query = r#"
+            WITH target_pools AS (
+                SELECT unnest($1::bytea[]) AS pool_address
+            ),
+            pool_basic_info AS (
+                SELECT 
+                    p.pool_address,
+                    p.creator,
+                    p.token_base_address,
+                    p.token_quote_address,
+                    p.factory,
+                    p.created_at,
+                    p.initial_token_base_reserve,
+                    p.initial_token_quote_reserve,
+                    COALESCE(p.curve_percentage, 0) AS bonding_curve_percent,
+                    t.name,
+                    t.symbol,
+                    t.image,
+                    t.decimals,
+                    t.website,
+                    t.twitter,
+                    t.telegram,
+                    t.supply::numeric AS token_supply,
+                    power(10::numeric, t.decimals)::numeric AS scale_factor
+                FROM pools p
+                JOIN target_pools tp ON tp.pool_address = p.pool_address
+                JOIN tokens t ON t.mint_address = p.token_base_address
+            ),
+            latest_prices AS (
+                SELECT DISTINCT ON (pool_address)
+                    pool_address,
+                    base_reserve AS liquidity_token,
+                    quote_reserve AS liquidity_sol,
+                    price_sol AS current_price_sol
+                FROM swaps
+                WHERE pool_address = ANY($1::bytea[])
+                ORDER BY pool_address, created_at DESC
+            ),
+            holder_counts AS (
+                SELECT 
+                    pbi.pool_address,
+                    COUNT(DISTINCT a.owner) AS num_holders
+                FROM pool_basic_info pbi
+                LEFT JOIN accounts a ON a.mint = pbi.token_base_address
+                    AND a.owner NOT IN (pbi.pool_address, pbi.token_base_address, pbi.token_quote_address)
+                GROUP BY pbi.pool_address
+            ),
+            volume_24h AS (
+                SELECT 
+                    pool_address,
+                    SUM(buy_volume + sell_volume) AS volume_sol,
+                    SUM(buy_count + sell_count) AS num_txns,
+                    SUM(buy_count) AS num_buys,
+                    SUM(sell_count) AS num_sells
+                FROM swaps_5m
+                WHERE pool_address = ANY($1::bytea[])
+                    AND bucket_start >= NOW() - INTERVAL '24 hours'
+                GROUP BY pool_address
+            )
+            SELECT 
+                pbi.pool_address,
+                pbi.creator,
+                pbi.token_base_address,
+                pbi.factory,
+                pbi.created_at,
+                pbi.bonding_curve_percent,
+                pbi.name,
+                pbi.symbol,
+                pbi.image,
+                pbi.decimals,
+                pbi.website,
+                pbi.twitter,
+                pbi.telegram,
+                pbi.token_supply,
+                pbi.scale_factor,
+                COALESCE(lp.liquidity_sol, pbi.initial_token_quote_reserve) AS liquidity_sol,
+                COALESCE(lp.liquidity_token, pbi.initial_token_base_reserve) AS liquidity_token,
+                COALESCE(lp.current_price_sol, 0) AS current_price_sol,
+                COALESCE(hc.num_holders, 0) AS num_holders,
+                COALESCE(v24.volume_sol, 0) AS volume_sol,
+                COALESCE(v24.num_txns, 0) AS num_txns,
+                COALESCE(v24.num_buys, 0) AS num_buys,
+                COALESCE(v24.num_sells, 0) AS num_sells,
+                0 AS top10_amount_raw,
+                0 AS dev_amount_raw,
+                0 AS snipers_amount_raw,
+                0 AS migration_count
+            FROM pool_basic_info pbi
+            LEFT JOIN latest_prices lp ON lp.pool_address = pbi.pool_address
+            LEFT JOIN holder_counts hc ON hc.pool_address = pbi.pool_address
+            LEFT JOIN volume_24h v24 ON v24.pool_address = pbi.pool_address
+            ORDER BY pbi.bonding_curve_percent DESC
+        "#;
+
+        let pools = sqlx::query(query)
+            .bind(&pool_hex_strings)
+            .fetch_all(&self.pool)
+            .await?;
+
+        let mut data = Vec::new();
+        for pool in pools.into_iter() {
+            let scale_factor = pool.try_get::<Decimal, _>("scale_factor")?;
+            let token_supply = pool.try_get::<Decimal, _>("token_supply")?;
+            let current_price: Decimal = pool.try_get::<Decimal, _>("current_price_sol")?;
+
+            let pulse_data = PulseDataResponse {
+                pair_address: pool.get::<String, _>("pool_address"),
+                liquidity_sol: pool.try_get::<Decimal, _>("liquidity_sol")?,
+                liquidity_token: pool.try_get::<Decimal, _>("liquidity_token")?,
+                token_address: pool.get::<String, _>("token_base_address"),
+                bonding_curve_percent: pool.try_get::<Decimal, _>("bonding_curve_percent")?,
+                token_name: pool.try_get("name")?,
+                token_symbol: pool.try_get("symbol")?,
+                token_decimals: pool.try_get::<i16, _>("decimals")? as u8,
+                creator: pool.try_get::<String, _>("creator")?,
+                protocol: pool.try_get("factory")?,
+                website: pool.try_get("website")?,
+                twitter: pool.try_get("twitter")?,
+                telegram: pool.try_get("telegram")?,
+                top10_holders_percent: Decimal::ZERO, // Simplified for performance
+                dev_holds_percent: Decimal::ZERO,     // Simplified for performance
+                snipers_holds_percent: Decimal::ZERO, // Simplified for performance
+                volume_sol: pool.try_get::<Decimal, _>("volume_sol")?,
+                market_cap_sol: calculate_market_cap(current_price, token_supply),
+                created_at: pool.try_get::<DateTime<Utc>, _>("created_at")?,
+                migration_count: pool.try_get("migration_count")?,
+                num_txns: pool.try_get("num_txns")?,
+                num_buys: pool.try_get("num_buys")?,
+                num_sells: pool.try_get("num_sells")?,
+                num_holders: pool.try_get("num_holders")?,
+                supply: pool.try_get("token_supply")?,
+                token_image: pool.try_get("image")?,
+                dev_wallet_funding: None, // Simplified for performance
+            };
+            data.push(pulse_data);
+        }
+        Ok(data)
+    }
+
     pub async fn get_token_info(&self, pool_address: String) -> Result<TokenInfo, sqlx::Error> {
         let query = r#"
         WITH pool_info AS (
