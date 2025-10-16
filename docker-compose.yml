@@ -1,19 +1,14 @@
 services:
   api:
-    image: cayde879/new-rust-indexer-api:latest # Use pre-built image
-    # Remove all build sections
-    platform: linux/arm64 # Ensure ARM64
+    image: cayde879/new-rust-indexer-api:latest
+    platform: linux/arm64
     restart: unless-stopped
     environment:
-      CLICKHOUSE_URL: "http://clickhouse:8123"
+      CLICKHOUSE_URL: "http://host.docker.internal:8123"
       CLICKHOUSE_USER: "default"
       CLICKHOUSE_PASSWORD: "${CLICKHOUSE_PASSWORD}"
       CLICKHOUSE_DATABASE: "${CLICKHOUSE_DATABASE}"
     ports:
       - 3001:3001
-    networks:
-      - shared
-
-networks:
-  shared:
-    external: true
+    # Remove networks section entirely
+# Remove networks section entirely
