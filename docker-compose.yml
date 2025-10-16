@@ -4,7 +4,7 @@ services:
     platform: linux/arm64
     restart: unless-stopped
     environment:
-      CLICKHOUSE_URL: "http://host.docker.internal:8123"
+      CLICKHOUSE_URL: "http://35.95.74.27:8123"
       CLICKHOUSE_USER: "default"
       CLICKHOUSE_PASSWORD: "${CLICKHOUSE_PASSWORD}"
       CLICKHOUSE_DATABASE: "${CLICKHOUSE_DATABASE}"
