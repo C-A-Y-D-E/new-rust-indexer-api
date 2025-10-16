@@ -66,5 +66,5 @@ jobs:
             export CLICKHOUSE_DATABASE=${{ secrets.CLICKHOUSE_DATABASE }}
 
             # Pull latest images and deploy
-            docker compose index-api pull api
-            docker compose index-api up -d api
+            docker compose -p index-api pull api
+            docker compose -p index-api up -d api
