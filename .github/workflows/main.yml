@@ -59,7 +59,9 @@ jobs:
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
           script: |
-            # docker network create shared || true
+
+
+            docker network create shared || true
             cd ~/index-api
 
             export CLICKHOUSE_PASSWORD=${{ secrets.CLICKHOUSE_PASSWORD }}

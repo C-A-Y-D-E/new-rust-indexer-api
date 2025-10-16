@@ -4,11 +4,15 @@ services:
     platform: linux/arm64
     restart: unless-stopped
     environment:
-      CLICKHOUSE_URL: "http://35.95.74.27:8123"
+      CLICKHOUSE_URL: "http://clickhouse:8123" # Use container name
       CLICKHOUSE_USER: "default"
       CLICKHOUSE_PASSWORD: "${CLICKHOUSE_PASSWORD}"
       CLICKHOUSE_DATABASE: "${CLICKHOUSE_DATABASE}"
     ports:
       - 3001:3001
-    # Remove networks section entirely
-# Remove networks section entirely
+    networks:
+      - shared
+
+networks:
+  shared:
+    external: true
