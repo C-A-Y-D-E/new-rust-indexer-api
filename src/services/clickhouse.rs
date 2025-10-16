@@ -61,9 +61,9 @@ impl ClickhouseService {
             .with_url(&url)
             .with_option("async_insert", "1")
             .with_option("wait_for_async_insert", "0")
-            .with_option("async_insert_max_data_size", "104857600") // 100MB
-            .with_option("async_insert_busy_timeout_ms", "200")
-            .with_option("async_insert_stale_timeout_ms", "0")
+            .with_option("async_insert_max_data_size", "104857600") // 100MB (keep this)
+            .with_option("async_insert_busy_timeout_ms", "400") // Increase to 2 seconds
+            .with_option("async_insert_stale_timeout_ms", "0") // Set to 1 second
             // Memory optimization
             .with_option("max_memory_usage", "0")
             .with_option("max_memory_usage_for_user", "0")
