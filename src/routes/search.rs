@@ -9,12 +9,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tracing::{error, warn};
 
+use crate::models::swap::SwapType;
 use crate::{
     defaults::{SOL_TOKEN, USDC_TOKEN},
     models::sniper::{DevHolding, SniperSummary},
-    services::db::QuoteTokenData,
+    services::clickhouse::ClickhouseService,
 };
-use crate::{models::swap::SwapType, services::db::DbService};
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive;
@@ -26,16 +26,13 @@ pub struct SearchParams {
 }
 
 pub async fn search_pools(
-    data: State<DbService>,
+    data: State<ClickhouseService>,
     query: Query<SearchParams>,
 ) -> Result<Json<serde_json::Value>, axum::http::StatusCode> {
     let search_term = query.search.trim_matches('"');
     if search_term.len() == 44 {
         // let pool_address = Pubkey::from_str_const(search_term).to_bytes().to_vec();
-        let pool_address = Pubkey::from_str(&search_term).map_err(|_| {
-         
-            StatusCode::BAD_REQUEST
-        })?;
+        let pool_address = Pubkey::from_str(&search_term).map_err(|_| StatusCode::BAD_REQUEST)?;
         let pool_and_token_data = data.get_pool_and_token_data(pool_address.to_string()).await;
         match pool_and_token_data {
             Ok(pool_and_token_data) => Ok(Json(json!({ "data": pool_and_token_data }))),

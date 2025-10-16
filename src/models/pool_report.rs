@@ -1,24 +1,22 @@
+use clickhouse::Row;
 use rust_decimal::Decimal;
 
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use sqlx::prelude::FromRow;
 
-#[derive(Debug, FromRow)]
+use crate::utils::Decimal18;
+
+#[derive(Debug, FromRow, Row, Deserialize, Serialize)]
 pub struct PoolReport {
     pub pool_address: String,
-    pub bucket_start: DateTime<Utc>,
-    // Buy metrics
-    pub buy_volume: Decimal,
-    pub buy_count: i64,
-    pub buyer_count: i64,
-    // Sell metrics
-    pub sell_volume: Decimal,
-    pub sell_count: i64,
-    pub seller_count: i64,
-    // Combined metrics
-    pub trader_count: i64,
-    // Price metrics
-    pub open_price: Decimal,
-    pub close_price: Decimal,
-    pub price_change_percent: Decimal,
+    #[serde(with = "clickhouse::serde::chrono::datetime")]
+    pub bucket_start: chrono::DateTime<chrono::Utc>,
+    pub buy_volume: Decimal18,
+    pub buy_count: u64,
+    pub sell_volume: Decimal18,
+    pub sell_count: u64,
+    pub unique_traders: u64,
+    pub unique_buyers: u64,
+    pub unique_sellers: u64,
 }

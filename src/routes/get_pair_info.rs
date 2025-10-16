@@ -12,12 +12,12 @@ use tracing::{debug, info, warn};
 use crate::{
     defaults::{SOL_TOKEN, USDC_TOKEN},
     models::{pool::DBPool, token::DBToken},
-    services::db::DbService,
+    services::clickhouse::ClickhouseService,
 };
 
 pub async fn get_pair_info(
     Path(address): Path<String>,
-    State(db): State<DbService>,
+    State(db): State<ClickhouseService>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let pool_address = Pubkey::from_str(&address).map_err(|_| {
         warn!("failed to parse pool address from token_info {}", address);

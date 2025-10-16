@@ -1,5 +1,6 @@
 use std::str::FromStr;
 
+use clickhouse::Row;
 use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive;
 use serde::{Deserialize, Serialize};
@@ -7,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use spl_token::{solana_program::pubkey::Pubkey, state::AccountState};
 use sqlx::prelude::FromRow;
 
-#[derive(Debug, sqlx::Type, Serialize, Deserialize)]
+#[derive(Debug, sqlx::Type, Serialize, Deserialize, Clone)]
 #[sqlx(type_name = "account_state")]
 pub enum DBAccountState {
     Uninitialized,
@@ -15,6 +16,26 @@ pub enum DBAccountState {
     Frozen,
 }
 
+impl DBAccountState {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Uninitialized => "Uninitialized",
+            Self::Initialized => "Initialized",
+            Self::Frozen => "Frozen",
+        }
+    }
+}
+impl FromStr for DBAccountState {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "Uninitialized" => Ok(Self::Uninitialized),
+            "Initialized" => Ok(Self::Initialized),
+            "Frozen" => Ok(Self::Frozen),
+            _ => Err("Invalid state".to_string()),
+        }
+    }
+}
 impl From<AccountState> for DBAccountState {
     fn from(account_state: AccountState) -> Self {
         match account_state {
@@ -35,6 +56,7 @@ impl From<DBAccountState> for AccountState {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[warn(dead_code)]
 pub struct Account {
     pub account: Pubkey,
     pub mint: Pubkey,
@@ -48,29 +70,18 @@ pub struct Account {
     pub program: Pubkey,
 }
 
-#[derive(FromRow, Serialize, Deserialize)]
+#[derive(FromRow, Serialize, Deserialize, Clone, Row)]
 pub struct DBTokenAccount {
     pub mint: String,
     pub owner: String,
-    pub amount: Decimal,
+    pub amount: i64,
     pub delegate: Option<String>,
-    pub state: DBAccountState,
-    pub is_native: Option<Decimal>,
-    pub delegated_amount: Decimal,
+    pub state: String,
+    pub is_native: Option<i64>,
+    pub delegated_amount: i64,
     pub close_authority: Option<String>,
     pub account: String,
     pub program: String,
-}
-
-#[derive(FromRow, Serialize, Deserialize)]
-
-pub struct HolderResponse {
-    pub address: String,
-    pub account: String,
-    pub amount: Decimal,
-    pub mint: String,
-    pub state: DBAccountState,
-    pub delegated_amount: Decimal,
 }
 
 impl From<Account> for DBTokenAccount {
@@ -79,15 +90,12 @@ impl From<Account> for DBTokenAccount {
             mint: account.mint.to_string(),
             owner: account.owner.to_string(),
             account: account.account.to_string(),
-            amount: Decimal::from(account.amount),
+            amount: account.amount as i64,
             delegate: account.delegate.map(|d| d.to_string()).into(),
-            state: account.state,
-            is_native: account.is_native.map(Decimal::from).into(),
-            delegated_amount: Decimal::from(account.delegated_amount),
-            close_authority: account
-                .close_authority
-                .map(|ca| ca.to_string())
-                .into(),
+            state: account.state.as_str().to_string(),
+            is_native: account.is_native.map(|n| n as i64).into(),
+            delegated_amount: account.delegated_amount as i64,
+            close_authority: account.close_authority.map(|ca| ca.to_string()).into(),
             program: account.program.to_string(),
         }
     }
@@ -109,7 +117,8 @@ impl TryFrom<DBTokenAccount> for Account {
                         .expect("Failed to parse delegate")
                 })
                 .into(),
-            state: db_token.state,
+            state: DBAccountState::from_str(&db_token.state)
+                .map_err(|_| "parse state".to_string())?,
             is_native: db_token
                 .is_native
                 .map(|n| n.to_u64().expect("Failed to parse is native"))
@@ -132,21 +141,6 @@ impl TryFrom<DBTokenAccount> for Account {
             program: Pubkey::from_str(&db_token.program)
                 .map_err(|_| "parse program".to_string())
                 .expect("Failed to parse program"),
-        })
-    }
-}
-
-impl TryFrom<DBTokenAccount> for HolderResponse {
-    type Error = String;
-
-    fn try_from(db_token: DBTokenAccount) -> Result<Self, Self::Error> {
-        Ok(Self {
-            address: db_token.owner,
-            account: db_token.account,
-            amount: db_token.amount,
-            mint: db_token.mint,
-            state: db_token.state,
-            delegated_amount: db_token.delegated_amount,
         })
     }
 }

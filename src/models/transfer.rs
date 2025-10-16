@@ -1,9 +1,19 @@
 use std::str::FromStr;
 
 use rust_decimal::Decimal;
+use rust_decimal::prelude::ToPrimitive;
 use solana_signature::Signature;
 use spl_token::solana_program::pubkey::Pubkey;
 use sqlx::prelude::FromRow;
+
+#[derive(Debug, FromRow)]
+pub struct TransferData {
+    pub source: Pubkey,
+    pub destination: Pubkey,
+    pub authority: Pubkey,
+    // pub amount: f64,
+    pub amount: u64,
+}
 
 #[derive(Debug, FromRow)]
 pub struct TransferSol {

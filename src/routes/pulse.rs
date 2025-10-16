@@ -1,27 +1,98 @@
-use axum::{
-    Json,
-    extract::{FromRequest, State},
-    http::StatusCode,
-};
+use axum::{Json, extract::State, http::StatusCode};
 use chrono::{DateTime, Utc};
+use clickhouse::Row;
 use rust_decimal::Decimal;
 use serde::Deserialize;
-use serde_json::{Number, json};
-use sqlx::{PgPool, Row};
+use serde_json::json;
 use tracing::info;
 
 use crate::{
-    models::pool::{DBPool, Pool},
-    services::db::DbService,
+    services::clickhouse::ClickhouseService,
     types::{
         filter::{PulseFilter, PulseTable},
         pulse::{DevWalletFunding, PulseDataResponse},
     },
-    utils::{calculate_market_cap, calculate_percentage},
+    utils::{Decimal18, calculate_market_cap, calculate_percentage},
 };
 
+// Helper function to convert Decimal18 to rust_decimal::Decimal
+#[allow(dead_code)]
+fn to_decimal(d18: Decimal18) -> Decimal {
+    Decimal::from_str_exact(&d18.to_string()).unwrap_or(Decimal::ZERO)
+}
+
+// Helper function to convert i64 to Decimal
+#[allow(dead_code)]
+fn i64_to_decimal(val: i64) -> Decimal {
+    Decimal::from(val)
+}
+
+// Helper function to convert f64 to Decimal
+#[allow(dead_code)]
+fn f64_to_decimal(val: f64) -> Decimal {
+    Decimal::from_f64_retain(val).unwrap_or(Decimal::ZERO)
+}
+
+// ClickHouse result row structure
+#[allow(dead_code)]
+#[derive(Debug, Deserialize, Row)]
+struct PulseRow {
+    pool_address: String,
+    creator: String,
+    token_base_address: String,
+    token_quote_address: String,
+    factory: String,
+    #[serde(with = "clickhouse::serde::chrono::datetime")]
+    created_at: DateTime<Utc>,
+    initial_token_base_reserve: Decimal18,
+    initial_token_quote_reserve: Decimal18,
+    bonding_curve_percent: Decimal18,
+
+    // Token metadata
+    name: String,
+    symbol: String,
+    image: Option<String>,
+    decimals: i8,
+    website: Option<String>,
+    twitter: Option<String>,
+    telegram: Option<String>,
+    mint_address: String,
+    token_supply: Decimal18,
+    scale_factor: f64,
+
+    // Liquidity/price
+    liquidity_sol: Decimal18,
+    liquidity_token: Decimal18,
+    current_price_sol: Decimal18,
+
+    // Holders
+    num_holders: u64,
+
+    // Raw amounts for calculations
+    top10_amount_raw: i64,
+    dev_amount_raw: i64,
+    snipers_amount_raw: Decimal18,
+
+    // Migrations
+    migration_count: u64,
+
+    // Volume metrics
+    volume_sol: Decimal18,
+    num_txns: i64,
+    num_buys: i64,
+    num_sells: i64,
+
+    // Dev wallet funding
+    funding_wallet_address: Option<String>,
+    wallet_address: Option<String>,
+    amount_sol: Option<Decimal18>,
+    transfer_hash: Option<String>,
+    #[serde(with = "clickhouse::serde::chrono::datetime::option")]
+    funded_at: Option<DateTime<Utc>>,
+}
+
 pub async fn pulse(
-    State(db): State<DbService>,
+    State(db): State<ClickhouseService>,
     Json(input): Json<PulseFilter>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let filters = input.filters;
@@ -48,23 +119,22 @@ WITH all_pools AS (
     p.initial_token_quote_reserve,
     p.curve_percentage
   FROM pools p
- WHERE p.created_at >= now() - interval '24 hours'
+ WHERE p.created_at >= now() - INTERVAL 24 HOUR
  AND p.curve_percentage < 50
-
 
 "#,
             );
             if let Some(min_age) = filters.age.min {
                 // min_age is minutes from now, so we want pools created at least min_age minutes ago
                 query.push_str(&format!(
-                    " AND p.created_at <= now() - interval '{} minutes'",
+                    " AND p.created_at <= now() - INTERVAL {} MINUTE",
                     min_age
                 ));
             }
             if let Some(max_age) = filters.age.max {
                 // max_age is minutes from now, so we want pools created at most max_age minutes ago
                 query.push_str(&format!(
-                    " AND p.created_at >= now() - interval '{} minutes'",
+                    " AND p.created_at >= now() - INTERVAL {} MINUTE",
                     max_age
                 ));
             }
@@ -82,35 +152,35 @@ WITH all_pools AS (
                 query.push_str(&factory_conditions.join(" OR "));
                 query.push_str(")");
             }
-            query.push_str(r#"
+            query.push_str(
+                r#"
           ),
-          
+
 tok AS (
   SELECT
     t.mint_address,
     t.name, t.symbol, t.image, t.decimals,
     t.website, t.twitter, t.telegram,
-    t.supply::numeric AS token_supply,
-    power(10::numeric, t.decimals)::numeric AS scale_factor
+    t.supply AS token_supply,
+    pow(10, t.decimals) AS scale_factor
   FROM tokens t
 ),
 latest_swap AS (
   SELECT
     r.pool_address,
-    ls.latest_base_reserve,
-    ls.latest_quote_reserve,
-    ls.latest_price_sol
+    s.base_reserve AS latest_base_reserve,
+    s.quote_reserve AS latest_quote_reserve,
+    s.price_sol AS latest_price_sol
   FROM all_pools r
-  LEFT JOIN LATERAL (
-    SELECT
-      s.base_reserve  AS latest_base_reserve,
-      s.quote_reserve AS latest_quote_reserve,
-      s.price_sol     AS latest_price_sol
-    FROM swaps s
-    WHERE s.pool_address = r.pool_address
-    ORDER BY s.created_at DESC
-    LIMIT 1
-  ) ls ON TRUE
+  LEFT JOIN (
+    SELECT 
+      pool_address,
+      argMax(base_reserve, created_at) AS base_reserve,
+      argMax(quote_reserve, created_at) AS quote_reserve,
+      argMax(price_sol, created_at) AS price_sol
+    FROM swaps
+    GROUP BY pool_address
+  ) s ON s.pool_address = r.pool_address
 ),
 holders_base AS (
   SELECT
@@ -119,7 +189,9 @@ holders_base AS (
   FROM all_pools r
   JOIN accounts a
     ON a.mint = r.token_base_address
-   AND a.owner <> ALL (ARRAY[r.pool_address, r.pool_base_address, r.pool_quote_address])
+   AND a.owner <> r.pool_address
+   AND a.owner <> r.pool_base_address
+   AND a.owner <> r.pool_quote_address
   GROUP BY r.pool_address
 ),
 top10_holders AS (
@@ -130,7 +202,9 @@ top10_holders AS (
     FROM all_pools r
     JOIN accounts a
       ON a.mint = r.token_base_address
-     AND a.owner <> ALL (ARRAY[r.pool_address, r.pool_base_address, r.pool_quote_address])
+     AND a.owner <> r.pool_address
+     AND a.owner <> r.pool_base_address
+     AND a.owner <> r.pool_quote_address
   ) x
   WHERE rn <= 10
   GROUP BY pool_address
@@ -160,58 +234,63 @@ snipers_holds AS (
 dev_wallet_funding AS (
   SELECT
     r.pool_address,
-    df.source,
-    df.destination,
-    df.amount,
-    df.hash,
-    df.created_at
+    ts.source,
+    ts.destination,
+    ts.amount,
+    ts.hash,
+    ts.earliest_transfer_at AS created_at
   FROM all_pools r
-  LEFT JOIN LATERAL (
-    SELECT
-      ts.source,
-      ts.destination,
-      ts.amount,
-      ts.hash,
-      ts.created_at
-    FROM transfer_sol ts
-    WHERE ts.destination = r.creator
-    ORDER BY ts.created_at ASC
-    LIMIT 1
-  ) df ON TRUE
+  LEFT JOIN (
+    SELECT 
+      destination,
+      argMin(source, created_at) AS source,
+      argMin(amount, created_at) AS amount,
+      argMin(hash, created_at) AS hash,
+      min(created_at) AS earliest_transfer_at
+    FROM transfer_sol
+    GROUP BY destination
+  ) ts ON ts.destination = r.creator
 ),
 migration AS (
   SELECT r.creator,
-         count(*) FILTER (WHERE p2.pre_factory = 'PumpFun' AND p2.factory = 'PumpSwap') AS migration_count
+         countIf(p2.pre_factory = 'PumpFun' AND p2.factory = 'PumpSwap') AS migration_count
   FROM all_pools r
   LEFT JOIN pools p2 ON p2.creator = r.creator
   GROUP BY r.creator
 ),
-vol_24h AS (         -- choose one source
+vol_24h AS (
   SELECT s.pool_address,
          SUM(s.buy_volume + s.sell_volume) AS volume_sol,
-         SUM(s.buy_count)::int8            AS num_buys,
-         SUM(s.sell_count)::int8           AS num_sells,
-         SUM(s.buy_count + s.sell_count)::int8 AS num_txns
-  FROM swaps_5m s
-  JOIN all_pools r USING (pool_address)
-  WHERE  s.bucket_start <  now() - interval '5 minutes'
+         CAST(SUM(s.buy_count) AS Int64) AS num_buys,
+         CAST(SUM(s.sell_count) AS Int64) AS num_sells,
+         CAST(SUM(s.buy_count + s.sell_count) AS Int64) AS num_txns
+  FROM pool_report_5m s
+  JOIN all_pools r ON r.pool_address = s.pool_address
+  WHERE  s.bucket_start < now() - INTERVAL 5 MINUTE
   GROUP BY s.pool_address
 )
 SELECT
-  r.pool_address,
-  r.creator,
-  r.token_base_address,
-  r.token_quote_address,
-  r.factory,
-  r.created_at,
-  r.initial_token_base_reserve,
-  r.initial_token_quote_reserve,
+  r.pool_address AS pool_address,
+  r.creator AS creator,
+  r.token_base_address AS token_base_address,
+  r.token_quote_address AS token_quote_address,
+  r.factory AS factory,
+  r.created_at AS created_at,
+  r.initial_token_base_reserve AS initial_token_base_reserve,
+  r.initial_token_quote_reserve AS initial_token_quote_reserve,
   coalesce(r.curve_percentage, 0) AS bonding_curve_percent,
 
   -- token meta
-  t.name, t.symbol, t.image, t.decimals, t.website, t.twitter, t.telegram, t.mint_address,
-  t.token_supply,
-  t.scale_factor,
+  t.name AS name,
+  t.symbol AS symbol,
+  t.image AS image,
+  t.decimals AS decimals,
+  t.website AS website,
+  t.twitter AS twitter,
+  t.telegram AS telegram,
+  t.mint_address AS mint_address,
+  t.token_supply AS token_supply,
+  t.scale_factor AS scale_factor,
 
   -- liquidity/price (fallback to initial if no swaps yet)
   coalesce(ls.latest_quote_reserve, r.initial_token_quote_reserve) AS liquidity_sol,
@@ -230,16 +309,16 @@ SELECT
   coalesce(m.migration_count, 0)                                   AS migration_count,
 
   coalesce(v.volume_sol, 0) AS volume_sol,
-coalesce(v.num_txns,   0) AS num_txns,
-coalesce(v.num_buys,   0) AS num_buys,
-coalesce(v.num_sells,  0) AS num_sells,
+  coalesce(v.num_txns,   0) AS num_txns,
+  coalesce(v.num_buys,   0) AS num_buys,
+  coalesce(v.num_sells,  0) AS num_sells,
 
   -- dev wallet funding (first transfer)
-  df.source       AS funding_wallet_address,
-  df.destination  AS wallet_address,
-  df.amount       AS amount_sol,
-  df.hash         AS transfer_hash,
-  df.created_at   AS funded_at
+  nullIf(df.source, '')       AS funding_wallet_address,
+  nullIf(df.destination, '')  AS wallet_address,
+  if(df.source = '', NULL, df.amount) AS amount_sol,
+  nullIf(df.hash, '')         AS transfer_hash,
+  if(df.source = '', NULL, df.created_at) AS funded_at
 
 FROM all_pools r
 LEFT JOIN vol_24h v ON v.pool_address = r.pool_address
@@ -251,7 +330,8 @@ LEFT JOIN dev_hold         d  ON d.pool_address  = r.pool_address
 LEFT JOIN snipers_holds    sh ON sh.pool_address = r.pool_address
 LEFT JOIN dev_wallet_funding df ON df.pool_address = r.pool_address
 LEFT JOIN migration        m  ON m.creator       = r.creator
-          "#);
+          "#,
+            );
             // Apply remaining filters (excluding age since it's already applied above)
             let mut where_conditions = Vec::new();
 
@@ -436,16 +516,14 @@ LEFT JOIN migration        m  ON m.creator       = r.creator
             // Close the CTE and add basic SELECT
             query.push_str(
                 r#"
-        
-                      ORDER BY bonding_curve_percent DESC
-                      LIMIT 10;
-                      "#,
+ORDER BY created_at DESC
+LIMIT 10
+"#,
             );
 
-            // let explain_query = format!("EXPLAIN (ANALYZE, BUFFERS) {}", query);
             // println!("{}", query);
 
-            let pools = sqlx::query(&query).fetch_all(&db.pool).await.map_err(|e| {
+            let pools: Vec<PulseRow> = db.client.query(&query).fetch_all().await.map_err(|e| {
                 info!("DB query failed: {e}");
                 StatusCode::INTERNAL_SERVER_ERROR
             })?;
@@ -453,61 +531,60 @@ LEFT JOIN migration        m  ON m.creator       = r.creator
             let mut data = Vec::new();
             for pool in pools.into_iter() {
                 let top10_holders_percent = calculate_percentage(
-                    pool.get::<Decimal, _>("top10_amount_raw"),
-                    pool.get::<Decimal, _>("scale_factor"),
-                    pool.get::<Decimal, _>("token_supply"),
+                    Decimal18::from_bits(pool.top10_amount_raw as i128),
+                    Decimal18::from_bits(pool.scale_factor as i128),
+                    Decimal18::from_bits(*pool.token_supply.as_bits()),
                 );
                 let dev_holds_percent = calculate_percentage(
-                    pool.get::<Decimal, _>("dev_amount_raw"),
-                    pool.get::<Decimal, _>("scale_factor"),
-                    pool.get::<Decimal, _>("token_supply"),
+                    Decimal18::from_bits(pool.dev_amount_raw as i128),
+                    Decimal18::from_bits(pool.scale_factor as i128),
+                    Decimal18::from_bits(*pool.token_supply.as_bits()),
                 );
                 let snipers_holds_percent = calculate_percentage(
-                    pool.get::<Decimal, _>("snipers_amount_raw"),
-                    pool.get::<Decimal, _>("scale_factor"),
-                    pool.get::<Decimal, _>("token_supply"),
+                    Decimal18::from_bits(*pool.snipers_amount_raw.as_bits()),
+                    Decimal18::from_bits(pool.scale_factor as i128),
+                    Decimal18::from_bits(*pool.token_supply.as_bits()),
                 );
                 let market_cap_sol = calculate_market_cap(
-                    pool.get::<Decimal, _>("current_price_sol"),
-                    pool.get::<Decimal, _>("token_supply"),
+                    Decimal18::from_bits(*pool.current_price_sol.as_bits()),
+                    Decimal18::from_bits(*pool.token_supply.as_bits()),
                 );
                 let pulse_data: PulseDataResponse = PulseDataResponse {
-                    pair_address: pool.get::<String, _>("pool_address"),
-                    liquidity_sol: pool.get::<Decimal, _>("liquidity_sol"),
-                    liquidity_token: pool.get("liquidity_token"),
-                    token_address: pool.get::<String, _>("mint_address"),
-                    bonding_curve_percent: pool.get::<Decimal, _>("bonding_curve_percent"),
-                    token_name: pool.get("name"),
-                    token_symbol: pool.get("symbol"),
-                    token_decimals: pool.get::<i16, _>("decimals") as u8,
-                    creator: pool.get::<String, _>("creator"),
-                    protocol: pool.get("factory"),
-                    website: pool.get("website"),
-                    twitter: pool.get("twitter"),
-                    telegram: pool.get("telegram"),
-                    // discord: pool.get("discord"),
-                    top10_holders_percent: top10_holders_percent,
-                    dev_holds_percent: dev_holds_percent,
-                    snipers_holds_percent: snipers_holds_percent,
-                    volume_sol: pool.get::<Decimal, _>("volume_sol"),
-                    market_cap_sol: market_cap_sol,
-                    created_at: pool.get::<DateTime<Utc>, _>("created_at"),
-                    migration_count: pool.get("migration_count"),
-                    num_txns: pool.get("num_txns"),
-                    num_buys: pool.get("num_buys"),
-                    num_sells: pool.get("num_sells"),
-                    num_holders: pool.get("num_holders"),
-                    supply: pool.get("token_supply"),
-                    token_image: pool.get("image"),
-                    dev_wallet_funding: if let Some(funding_wallet) =
-                        pool.get::<Option<String>, _>("funding_wallet_address")
-                    {
+                    pair_address: pool.pool_address,
+                    liquidity_sol: Decimal18::from_bits(*pool.liquidity_sol.as_bits()),
+                    liquidity_token: Decimal18::from_bits(*pool.liquidity_token.as_bits()),
+                    token_address: pool.mint_address,
+                    bonding_curve_percent: Decimal18::from_bits(
+                        *pool.bonding_curve_percent.as_bits(),
+                    ),
+                    token_name: Some(pool.name),
+                    token_symbol: Some(pool.symbol),
+                    token_decimals: pool.decimals as u8,
+                    creator: pool.creator,
+                    protocol: pool.factory,
+                    website: pool.website,
+                    twitter: pool.twitter,
+                    telegram: pool.telegram,
+                    top10_holders_percent,
+                    dev_holds_percent,
+                    snipers_holds_percent,
+                    volume_sol: Decimal18::from_bits(*pool.volume_sol.as_bits()),
+                    market_cap_sol,
+                    created_at: pool.created_at,
+                    migration_count: pool.migration_count as i64,
+                    num_txns: pool.num_txns,
+                    num_buys: pool.num_buys,
+                    num_sells: pool.num_sells,
+                    num_holders: pool.num_holders as i64,
+                    supply: pool.token_supply,
+                    token_image: pool.image,
+                    dev_wallet_funding: if let Some(funding_wallet) = pool.funding_wallet_address {
                         Some(DevWalletFunding {
                             funding_wallet_address: funding_wallet,
-                            wallet_address: pool.get::<String, _>("wallet_address"),
-                            amount_sol: pool.get("amount_sol"),
-                            hash: pool.get::<String, _>("transfer_hash"),
-                            funded_at: pool.get::<DateTime<Utc>, _>("funded_at"),
+                            wallet_address: pool.wallet_address.unwrap_or_default(),
+                            amount_sol: to_decimal(pool.amount_sol.unwrap_or_default()),
+                            hash: pool.transfer_hash.unwrap_or_default(),
+                            funded_at: pool.funded_at.unwrap_or(Utc::now()),
                         })
                     } else {
                         None
@@ -536,21 +613,21 @@ WITH all_pools AS (
     p.initial_token_quote_reserve,
     p.curve_percentage
   FROM pools p
- WHERE p.created_at >= now() - interval '24 hours'
+ WHERE p.created_at >= now() - INTERVAL 24 HOUR
    AND p.curve_percentage < 100
 "#,
             );
             if let Some(min_age) = filters.age.min {
                 // min_age is minutes from now, so we want pools created at least min_age minutes ago
                 query.push_str(&format!(
-                    " AND p.created_at <= now() - interval '{} minutes'",
+                    " AND p.created_at <= now() - INTERVAL {} MINUTE",
                     min_age
                 ));
             }
             if let Some(max_age) = filters.age.max {
                 // max_age is minutes from now, so we want pools created at most max_age minutes ago
                 query.push_str(&format!(
-                    " AND p.created_at >= now() - interval '{} minutes'",
+                    " AND p.created_at >= now() - INTERVAL {} MINUTE",
                     max_age
                 ));
             }
@@ -568,35 +645,35 @@ WITH all_pools AS (
                 query.push_str(&factory_conditions.join(" OR "));
                 query.push_str(")");
             }
-            query.push_str(r#"
+            query.push_str(
+                r#"
           ),
-          
+
 tok AS (
   SELECT
     t.mint_address,
     t.name, t.symbol, t.image, t.decimals,
     t.website, t.twitter, t.telegram,
-    t.supply::numeric AS token_supply,
-    power(10::numeric, t.decimals)::numeric AS scale_factor
+    t.supply AS token_supply,
+    pow(10, t.decimals) AS scale_factor
   FROM tokens t
 ),
 latest_swap AS (
   SELECT
     r.pool_address,
-    ls.latest_base_reserve,
-    ls.latest_quote_reserve,
-    ls.latest_price_sol
+    s.base_reserve AS latest_base_reserve,
+    s.quote_reserve AS latest_quote_reserve,
+    s.price_sol AS latest_price_sol
   FROM all_pools r
-  LEFT JOIN LATERAL (
-    SELECT
-      s.base_reserve  AS latest_base_reserve,
-      s.quote_reserve AS latest_quote_reserve,
-      s.price_sol     AS latest_price_sol
-    FROM swaps s
-    WHERE s.pool_address = r.pool_address
-    ORDER BY s.created_at DESC
-    LIMIT 1
-  ) ls ON TRUE
+  LEFT JOIN (
+    SELECT 
+      pool_address,
+      argMax(base_reserve, created_at) AS base_reserve,
+      argMax(quote_reserve, created_at) AS quote_reserve,
+      argMax(price_sol, created_at) AS price_sol
+    FROM swaps
+    GROUP BY pool_address
+  ) s ON s.pool_address = r.pool_address
 ),
 holders_base AS (
   SELECT
@@ -605,7 +682,9 @@ holders_base AS (
   FROM all_pools r
   JOIN accounts a
     ON a.mint = r.token_base_address
-   AND a.owner <> ALL (ARRAY[r.pool_address, r.pool_base_address, r.pool_quote_address])
+   AND a.owner <> r.pool_address
+   AND a.owner <> r.pool_base_address
+   AND a.owner <> r.pool_quote_address
   GROUP BY r.pool_address
 ),
 top10_holders AS (
@@ -616,7 +695,9 @@ top10_holders AS (
     FROM all_pools r
     JOIN accounts a
       ON a.mint = r.token_base_address
-     AND a.owner <> ALL (ARRAY[r.pool_address, r.pool_base_address, r.pool_quote_address])
+     AND a.owner <> r.pool_address
+     AND a.owner <> r.pool_base_address
+     AND a.owner <> r.pool_quote_address
   ) x
   WHERE rn <= 10
   GROUP BY pool_address
@@ -646,59 +727,64 @@ snipers_holds AS (
 dev_wallet_funding AS (
   SELECT
     r.pool_address,
-    df.source,
-    df.destination,
-    df.amount,
-    df.hash,
-    df.created_at
+    ts.source,
+    ts.destination,
+    ts.amount,
+    ts.hash,
+    ts.earliest_transfer_at AS created_at
   FROM all_pools r
-  LEFT JOIN LATERAL (
-    SELECT
-      ts.source,
-      ts.destination,
-      ts.amount,
-      ts.hash,
-      ts.created_at
-    FROM transfer_sol ts
-    WHERE ts.destination = r.creator
-    ORDER BY ts.created_at ASC
-    LIMIT 1
-  ) df ON TRUE
+  LEFT JOIN (
+    SELECT 
+      destination,
+      argMin(source, created_at) AS source,
+      argMin(amount, created_at) AS amount,
+      argMin(hash, created_at) AS hash,
+      min(created_at) AS earliest_transfer_at
+    FROM transfer_sol
+    GROUP BY destination
+  ) ts ON ts.destination = r.creator
 ),
 migration AS (
   SELECT r.creator,
-         count(*) FILTER (WHERE p2.pre_factory = 'PumpFun' AND p2.factory = 'PumpSwap') AS migration_count
+         countIf(p2.pre_factory = 'PumpFun' AND p2.factory = 'PumpSwap') AS migration_count
   FROM all_pools r
   LEFT JOIN pools p2 ON p2.creator = r.creator
   GROUP BY r.creator
 ),
 
-vol_24h AS (         -- choose one source
+vol_24h AS (
   SELECT s.pool_address,
          SUM(s.buy_volume + s.sell_volume) AS volume_sol,
-         SUM(s.buy_count)::int8            AS num_buys,
-         SUM(s.sell_count)::int8           AS num_sells,
-         SUM(s.buy_count + s.sell_count)::int8 AS num_txns
-  FROM swaps_5m s
-  JOIN all_pools r USING (pool_address)
-  WHERE  s.bucket_start <  now() - interval '5 minutes'
+         CAST(SUM(s.buy_count) AS Int64) AS num_buys,
+         CAST(SUM(s.sell_count) AS Int64) AS num_sells,
+         CAST(SUM(s.buy_count + s.sell_count) AS Int64) AS num_txns
+  FROM pool_report_5m s
+  JOIN all_pools r ON r.pool_address = s.pool_address
+  WHERE  s.bucket_start < now() - INTERVAL 5 MINUTE
   GROUP BY s.pool_address
 )
 SELECT
-  r.pool_address,
-  r.creator,
-  r.token_base_address,
-  r.token_quote_address,
-  r.factory,
-  r.created_at,
-  r.initial_token_base_reserve,
-  r.initial_token_quote_reserve,
+  r.pool_address AS pool_address,
+  r.creator AS creator,
+  r.token_base_address AS token_base_address,
+  r.token_quote_address AS token_quote_address,
+  r.factory AS factory,
+  r.created_at AS created_at,
+  r.initial_token_base_reserve AS initial_token_base_reserve,
+  r.initial_token_quote_reserve AS initial_token_quote_reserve,
   coalesce(r.curve_percentage, 0) AS bonding_curve_percent,
 
   -- token meta
-  t.name, t.symbol, t.image, t.decimals, t.website, t.twitter, t.telegram, t.mint_address,
-  t.token_supply,
-  t.scale_factor,
+  t.name AS name,
+  t.symbol AS symbol,
+  t.image AS image,
+  t.decimals AS decimals,
+  t.website AS website,
+  t.twitter AS twitter,
+  t.telegram AS telegram,
+  t.mint_address AS mint_address,
+  t.token_supply AS token_supply,
+  t.scale_factor AS scale_factor,
 
   -- liquidity/price (fallback to initial if no swaps yet)
   coalesce(ls.latest_quote_reserve, r.initial_token_quote_reserve) AS liquidity_sol,
@@ -717,16 +803,16 @@ SELECT
   coalesce(m.migration_count, 0)                                   AS migration_count,
 
   coalesce(v.volume_sol, 0) AS volume_sol,
-coalesce(v.num_txns,   0) AS num_txns,
-coalesce(v.num_buys,   0) AS num_buys,
-coalesce(v.num_sells,  0) AS num_sells,
+  coalesce(v.num_txns,   0) AS num_txns,
+  coalesce(v.num_buys,   0) AS num_buys,
+  coalesce(v.num_sells,  0) AS num_sells,
 
   -- dev wallet funding (first transfer)
-  df.source       AS funding_wallet_address,
-  df.destination  AS wallet_address,
-  df.amount       AS amount_sol,
-  df.hash         AS transfer_hash,
-  df.created_at   AS funded_at
+  nullIf(df.source, '')       AS funding_wallet_address,
+  nullIf(df.destination, '')  AS wallet_address,
+  if(df.source = '', NULL, df.amount) AS amount_sol,
+  nullIf(df.hash, '')         AS transfer_hash,
+  if(df.source = '', NULL, df.created_at) AS funded_at
 
 FROM all_pools r
 LEFT JOIN vol_24h v ON v.pool_address = r.pool_address
@@ -738,7 +824,8 @@ LEFT JOIN dev_hold         d  ON d.pool_address  = r.pool_address
 LEFT JOIN snipers_holds    sh ON sh.pool_address = r.pool_address
 LEFT JOIN dev_wallet_funding df ON df.pool_address = r.pool_address
 LEFT JOIN migration        m  ON m.creator       = r.creator
-          "#);
+          "#,
+            );
             // Apply remaining filters (excluding age since it's already applied above)
             let mut where_conditions = Vec::new();
 
@@ -923,77 +1010,73 @@ LEFT JOIN migration        m  ON m.creator       = r.creator
             // Close the CTE and add basic SELECT
             query.push_str(
                 r#"
-                      ORDER BY bonding_curve_percent DESC
-                      LIMIT 10;
-                      "#,
+ORDER BY bonding_curve_percent DESC
+LIMIT 10
+"#,
             );
 
-            // let explain_query = format!("EXPLAIN (ANALYZE, BUFFERS) {}", query);
-
-            let pools = sqlx::query(&query).fetch_all(&db.pool).await.map_err(|e| {
+            let pools: Vec<PulseRow> = db.client.query(&query).fetch_all().await.map_err(|e| {
                 info!("DB query failed: {e}");
                 StatusCode::INTERNAL_SERVER_ERROR
             })?;
-            println!("{:?}", pools);
 
             let mut data = Vec::new();
             for pool in pools.into_iter() {
                 let top10_holders_percent = calculate_percentage(
-                    pool.get::<Decimal, _>("top10_amount_raw"),
-                    pool.get::<Decimal, _>("scale_factor"),
-                    pool.get::<Decimal, _>("token_supply"),
+                    Decimal18::from_bits(pool.top10_amount_raw as i128),
+                    Decimal18::from_bits(pool.scale_factor as i128),
+                    Decimal18::from_bits(*pool.token_supply.as_bits()),
                 );
                 let dev_holds_percent = calculate_percentage(
-                    pool.get::<Decimal, _>("dev_amount_raw"),
-                    pool.get::<Decimal, _>("scale_factor"),
-                    pool.get::<Decimal, _>("token_supply"),
+                    Decimal18::from_bits(pool.dev_amount_raw as i128),
+                    Decimal18::from_bits(pool.scale_factor as i128),
+                    Decimal18::from_bits(*pool.token_supply.as_bits()),
                 );
                 let snipers_holds_percent = calculate_percentage(
-                    pool.get::<Decimal, _>("snipers_amount_raw"),
-                    pool.get::<Decimal, _>("scale_factor"),
-                    pool.get::<Decimal, _>("token_supply"),
+                    Decimal18::from_bits(*pool.snipers_amount_raw.as_bits()),
+                    Decimal18::from_bits(pool.scale_factor as i128),
+                    Decimal18::from_bits(*pool.token_supply.as_bits()),
                 );
                 let market_cap_sol = calculate_market_cap(
-                    pool.get::<Decimal, _>("current_price_sol"),
-                    pool.get::<Decimal, _>("token_supply"),
+                    Decimal18::from_bits(*pool.current_price_sol.as_bits()),
+                    Decimal18::from_bits(*pool.token_supply.as_bits()),
                 );
                 let pulse_data: PulseDataResponse = PulseDataResponse {
-                    pair_address: pool.get::<String, _>("pool_address"),
-                    liquidity_sol: pool.get::<Decimal, _>("liquidity_sol"),
-                    liquidity_token: pool.get("liquidity_token"),
-                    token_address: pool.get::<String, _>("mint_address"),
-                    bonding_curve_percent: pool.get::<Decimal, _>("bonding_curve_percent"),
-                    token_name: pool.get("name"),
-                    token_symbol: pool.get("symbol"),
-                    token_decimals: pool.get::<i16, _>("decimals") as u8,
-                    creator: pool.get::<String, _>("creator"),
-                    protocol: pool.get("factory"),
-                    website: pool.get("website"),
-                    twitter: pool.get("twitter"),
-                    telegram: pool.get("telegram"),
-                    // discord: pool.get("discord"),
-                    top10_holders_percent: top10_holders_percent,
-                    dev_holds_percent: dev_holds_percent,
-                    snipers_holds_percent: snipers_holds_percent,
-                    volume_sol: pool.get::<Decimal, _>("volume_sol"),
-                    market_cap_sol: market_cap_sol,
-                    created_at: pool.get::<DateTime<Utc>, _>("created_at"),
-                    migration_count: pool.get("migration_count"),
-                    num_txns: pool.get("num_txns"),
-                    num_buys: pool.get("num_buys"),
-                    num_sells: pool.get("num_sells"),
-                    num_holders: pool.get("num_holders"),
-                    supply: pool.get("token_supply"),
-                    token_image: pool.get("image"),
-                    dev_wallet_funding: if let Some(funding_wallet) =
-                        pool.get::<Option<String>, _>("funding_wallet_address")
-                    {
+                    pair_address: pool.pool_address,
+                    liquidity_sol: Decimal18::from_bits(*pool.liquidity_sol.as_bits()),
+                    liquidity_token: Decimal18::from_bits(*pool.liquidity_token.as_bits()),
+                    token_address: pool.mint_address,
+                    bonding_curve_percent: Decimal18::from_bits(
+                        *pool.bonding_curve_percent.as_bits(),
+                    ),
+                    token_name: Some(pool.name),
+                    token_symbol: Some(pool.symbol),
+                    token_decimals: pool.decimals as u8,
+                    creator: pool.creator,
+                    protocol: pool.factory,
+                    website: pool.website,
+                    twitter: pool.twitter,
+                    telegram: pool.telegram,
+                    top10_holders_percent,
+                    dev_holds_percent,
+                    snipers_holds_percent,
+                    volume_sol: Decimal18::from_bits(*pool.volume_sol.as_bits()),
+                    market_cap_sol,
+                    created_at: pool.created_at,
+                    migration_count: pool.migration_count as i64,
+                    num_txns: pool.num_txns,
+                    num_buys: pool.num_buys,
+                    num_sells: pool.num_sells,
+                    num_holders: pool.num_holders as i64,
+                    supply: Decimal18::from_bits(*pool.token_supply.as_bits()),
+                    token_image: pool.image,
+                    dev_wallet_funding: if let Some(funding_wallet) = pool.funding_wallet_address {
                         Some(DevWalletFunding {
                             funding_wallet_address: funding_wallet,
-                            wallet_address: pool.get::<String, _>("wallet_address"),
-                            amount_sol: pool.get("amount_sol"),
-                            hash: pool.get::<String, _>("transfer_hash"),
-                            funded_at: pool.get::<DateTime<Utc>, _>("funded_at"),
+                            wallet_address: pool.wallet_address.unwrap_or_default(),
+                            amount_sol: to_decimal(pool.amount_sol.unwrap_or_default()),
+                            hash: pool.transfer_hash.unwrap_or_default(),
+                            funded_at: pool.funded_at.unwrap_or(Utc::now()),
                         })
                     } else {
                         None
@@ -1022,21 +1105,22 @@ WITH all_pools AS (
     p.initial_token_quote_reserve,
     p.curve_percentage
   FROM pools p
-  WHERE p.created_at >= now() - interval '24 hours'
+  WHERE p.created_at >= now() - INTERVAL 24 HOUR
+    AND isNotNull(p.pre_factory)
     AND p.pre_factory <> ''
     AND p.factory <> ''"#,
             );
             if let Some(min_age) = filters.age.min {
                 // min_age is minutes from now, so we want pools created at least min_age minutes ago
                 query.push_str(&format!(
-                    " AND p.created_at <= now() - interval '{} minutes'",
+                    " AND p.created_at <= now() - INTERVAL {} MINUTE",
                     min_age
                 ));
             }
             if let Some(max_age) = filters.age.max {
                 // max_age is minutes from now, so we want pools created at most max_age minutes ago
                 query.push_str(&format!(
-                    " AND p.created_at >= now() - interval '{} minutes'",
+                    " AND p.created_at >= now() - INTERVAL {} MINUTE",
                     max_age
                 ));
             }
@@ -1054,34 +1138,34 @@ WITH all_pools AS (
                 query.push_str(&factory_conditions.join(" OR "));
                 query.push_str(")");
             }
-            query.push_str(r#"
+            query.push_str(
+                r#"
           ),
          tok AS (
   SELECT
     t.mint_address,
     t.name, t.symbol, t.image, t.decimals,
     t.website, t.twitter, t.telegram,
-    t.supply::numeric AS token_supply,
-    power(10::numeric, t.decimals)::numeric AS scale_factor
+    t.supply AS token_supply,
+    pow(10, t.decimals) AS scale_factor
   FROM tokens t
 ),
 latest_swap AS (
   SELECT
     r.pool_address,
-    ls.latest_base_reserve,
-    ls.latest_quote_reserve,
-    ls.latest_price_sol
+    s.base_reserve AS latest_base_reserve,
+    s.quote_reserve AS latest_quote_reserve,
+    s.price_sol AS latest_price_sol
   FROM all_pools r
-  LEFT JOIN LATERAL (
-    SELECT
-      s.base_reserve  AS latest_base_reserve,
-      s.quote_reserve AS latest_quote_reserve,
-      s.price_sol     AS latest_price_sol
-    FROM swaps s
-    WHERE s.pool_address = r.pool_address
-    ORDER BY s.created_at DESC
-    LIMIT 1
-  ) ls ON TRUE
+  LEFT JOIN (
+    SELECT 
+      pool_address,
+      argMax(base_reserve, created_at) AS base_reserve,
+      argMax(quote_reserve, created_at) AS quote_reserve,
+      argMax(price_sol, created_at) AS price_sol
+    FROM swaps
+    GROUP BY pool_address
+  ) s ON s.pool_address = r.pool_address
 ),
 holders_base AS (
   SELECT
@@ -1090,7 +1174,9 @@ holders_base AS (
   FROM all_pools r
   JOIN accounts a
     ON a.mint = r.token_base_address
-   AND a.owner <> ALL (ARRAY[r.pool_address, r.pool_base_address, r.pool_quote_address])
+   AND a.owner <> r.pool_address
+   AND a.owner <> r.pool_base_address
+   AND a.owner <> r.pool_quote_address
   GROUP BY r.pool_address
 ),
 top10_holders AS (
@@ -1101,7 +1187,9 @@ top10_holders AS (
     FROM all_pools r
     JOIN accounts a
       ON a.mint = r.token_base_address
-     AND a.owner <> ALL (ARRAY[r.pool_address, r.pool_base_address, r.pool_quote_address])
+     AND a.owner <> r.pool_address
+     AND a.owner <> r.pool_base_address
+     AND a.owner <> r.pool_quote_address
   ) x
   WHERE rn <= 10
   GROUP BY pool_address
@@ -1131,59 +1219,64 @@ snipers_holds AS (
 dev_wallet_funding AS (
   SELECT
     r.pool_address,
-    df.source,
-    df.destination,
-    df.amount,
-    df.hash,
-    df.created_at
+    ts.source,
+    ts.destination,
+    ts.amount,
+    ts.hash,
+    ts.earliest_transfer_at AS created_at
   FROM all_pools r
-  LEFT JOIN LATERAL (
-    SELECT
-      ts.source,
-      ts.destination,
-      ts.amount,
-      ts.hash,
-      ts.created_at
-    FROM transfer_sol ts
-    WHERE ts.destination = r.creator
-    ORDER BY ts.created_at ASC
-    LIMIT 1
-  ) df ON TRUE
+  LEFT JOIN (
+    SELECT 
+      destination,
+      argMin(source, created_at) AS source,
+      argMin(amount, created_at) AS amount,
+      argMin(hash, created_at) AS hash,
+      min(created_at) AS earliest_transfer_at
+    FROM transfer_sol
+    GROUP BY destination
+  ) ts ON ts.destination = r.creator
 ),
 migration AS (
   SELECT r.creator,
-         count(*) FILTER (WHERE p2.pre_factory = 'PumpFun' AND p2.factory = 'PumpSwap') AS migration_count
+         countIf(p2.pre_factory = 'PumpFun' AND p2.factory = 'PumpSwap') AS migration_count
   FROM all_pools r
   LEFT JOIN pools p2 ON p2.creator = r.creator
   GROUP BY r.creator
 ),
 
-vol_24h AS (         -- choose one source
+vol_24h AS (
   SELECT s.pool_address,
          SUM(s.buy_volume + s.sell_volume) AS volume_sol,
-         SUM(s.buy_count)::int8            AS num_buys,
-         SUM(s.sell_count)::int8           AS num_sells,
-         SUM(s.buy_count + s.sell_count)::int8 AS num_txns
-  FROM swaps_5m s
-  JOIN all_pools r USING (pool_address)
-  WHERE  s.bucket_start <  now() - interval '5 minutes'
+         CAST(SUM(s.buy_count) AS Int64) AS num_buys,
+         CAST(SUM(s.sell_count) AS Int64) AS num_sells,
+         CAST(SUM(s.buy_count + s.sell_count) AS Int64) AS num_txns
+  FROM pool_report_5m s
+  JOIN all_pools r ON r.pool_address = s.pool_address
+  WHERE  s.bucket_start < now() - INTERVAL 5 MINUTE
   GROUP BY s.pool_address
 )
 SELECT
-  r.pool_address,
-  r.creator,
-  r.token_base_address,
-  r.token_quote_address,
-  r.factory,
-  r.created_at,
-  r.initial_token_base_reserve,
-  r.initial_token_quote_reserve,
+  r.pool_address AS pool_address,
+  r.creator AS creator,
+  r.token_base_address AS token_base_address,
+  r.token_quote_address AS token_quote_address,
+  r.factory AS factory,
+  r.created_at AS created_at,
+  r.initial_token_base_reserve AS initial_token_base_reserve,
+  r.initial_token_quote_reserve AS initial_token_quote_reserve,
   coalesce(r.curve_percentage, 0) AS bonding_curve_percent,
 
   -- token meta
-  t.name, t.symbol, t.image, t.decimals, t.website, t.twitter, t.telegram, t.mint_address,
-  t.token_supply,
-  t.scale_factor,
+  t.name AS name,
+  t.symbol AS symbol,
+  t.image AS image,
+  t.decimals AS decimals,
+  t.website AS website,
+  t.twitter AS twitter,
+  t.telegram AS telegram,
+  t.mint_address AS mint_address,
+  t.token_supply AS token_supply,
+  t.scale_factor AS scale_factor,
 
   -- liquidity/price (fallback to initial if no swaps yet)
   coalesce(ls.latest_quote_reserve, r.initial_token_quote_reserve) AS liquidity_sol,
@@ -1202,16 +1295,16 @@ SELECT
   coalesce(m.migration_count, 0)                                   AS migration_count,
 
   coalesce(v.volume_sol, 0) AS volume_sol,
-coalesce(v.num_txns,   0) AS num_txns,
-coalesce(v.num_buys,   0) AS num_buys,
-coalesce(v.num_sells,  0) AS num_sells,
+  coalesce(v.num_txns,   0) AS num_txns,
+  coalesce(v.num_buys,   0) AS num_buys,
+  coalesce(v.num_sells,  0) AS num_sells,
 
   -- dev wallet funding (first transfer)
-  df.source       AS funding_wallet_address,
-  df.destination  AS wallet_address,
-  df.amount       AS amount_sol,
-  df.hash         AS transfer_hash,
-  df.created_at   AS funded_at
+  nullIf(df.source, '')       AS funding_wallet_address,
+  nullIf(df.destination, '')  AS wallet_address,
+  if(df.source = '', NULL, df.amount) AS amount_sol,
+  nullIf(df.hash, '')         AS transfer_hash,
+  if(df.source = '', NULL, df.created_at) AS funded_at
 
 FROM all_pools r
 LEFT JOIN vol_24h v ON v.pool_address = r.pool_address
@@ -1223,7 +1316,8 @@ LEFT JOIN dev_hold         d  ON d.pool_address  = r.pool_address
 LEFT JOIN snipers_holds    sh ON sh.pool_address = r.pool_address
 LEFT JOIN dev_wallet_funding df ON df.pool_address = r.pool_address
 LEFT JOIN migration        m  ON m.creator       = r.creator
-          "#);
+          "#,
+            );
             // Apply remaining filters (excluding age since it's already applied above)
             let mut where_conditions = Vec::new();
 
@@ -1400,78 +1494,73 @@ LEFT JOIN migration        m  ON m.creator       = r.creator
             // Close the CTE and add basic SELECT
             query.push_str(
                 r#"
-
-                      ORDER BY created_at DESC
-                      LIMIT 10;
-                      "#,
+ORDER BY created_at DESC
+LIMIT 10
+"#,
             );
 
-            // let explain_query = format!("EXPLAIN (ANALYZE, BUFFERS) {}", query);
-
-            let pools = sqlx::query(&query).fetch_all(&db.pool).await.map_err(|e| {
+            let pools: Vec<PulseRow> = db.client.query(&query).fetch_all().await.map_err(|e| {
                 info!("DB query failed: {e}");
                 StatusCode::INTERNAL_SERVER_ERROR
             })?;
-            println!("{:?}", pools);
 
             let mut data = Vec::new();
             for pool in pools.into_iter() {
                 let top10_holders_percent = calculate_percentage(
-                    pool.get::<Decimal, _>("top10_amount_raw"),
-                    pool.get::<Decimal, _>("scale_factor"),
-                    pool.get::<Decimal, _>("token_supply"),
+                    Decimal18::from_bits(pool.top10_amount_raw as i128),
+                    Decimal18::from_bits(pool.scale_factor as i128),
+                    Decimal18::from_bits(*pool.token_supply.as_bits()),
                 );
                 let dev_holds_percent = calculate_percentage(
-                    pool.get::<Decimal, _>("dev_amount_raw"),
-                    pool.get::<Decimal, _>("scale_factor"),
-                    pool.get::<Decimal, _>("token_supply"),
+                    Decimal18::from_bits(pool.dev_amount_raw as i128),
+                    Decimal18::from_bits(pool.scale_factor as i128),
+                    Decimal18::from_bits(*pool.token_supply.as_bits()),
                 );
                 let snipers_holds_percent = calculate_percentage(
-                    pool.get::<Decimal, _>("snipers_amount_raw"),
-                    pool.get::<Decimal, _>("scale_factor"),
-                    pool.get::<Decimal, _>("token_supply"),
+                    Decimal18::from_bits(*pool.snipers_amount_raw.as_bits()),
+                    Decimal18::from_bits(pool.scale_factor as i128),
+                    Decimal18::from_bits(*pool.token_supply.as_bits()),
                 );
                 let market_cap_sol = calculate_market_cap(
-                    pool.get::<Decimal, _>("current_price_sol"),
-                    pool.get::<Decimal, _>("token_supply"),
+                    Decimal18::from_bits(*pool.current_price_sol.as_bits()),
+                    Decimal18::from_bits(*pool.token_supply.as_bits()),
                 );
                 let pulse_data: PulseDataResponse = PulseDataResponse {
-                    pair_address: pool.get::<String, _>("pool_address"),
-                    liquidity_sol: pool.get::<Decimal, _>("liquidity_sol"),
-                    liquidity_token: pool.get("liquidity_token"),
-                    token_address: pool.get::<String, _>("mint_address"),
-                    bonding_curve_percent: pool.get::<Decimal, _>("bonding_curve_percent"),
-                    token_name: pool.get("name"),
-                    token_symbol: pool.get("symbol"),
-                    token_decimals: pool.get::<i16, _>("decimals") as u8,
-                    creator: pool.get::<String, _>("creator"),
-                    protocol: pool.get("factory"),
-                    website: pool.get("website"),
-                    twitter: pool.get("twitter"),
-                    telegram: pool.get("telegram"),
-                    // discord: pool.get("discord"),
-                    top10_holders_percent: top10_holders_percent,
-                    dev_holds_percent: dev_holds_percent,
-                    snipers_holds_percent: snipers_holds_percent,
-                    volume_sol: pool.get::<Decimal, _>("volume_sol"),
-                    market_cap_sol: market_cap_sol,
-                    created_at: pool.get::<DateTime<Utc>, _>("created_at"),
-                    migration_count: pool.get("migration_count"),
-                    num_txns: pool.get("num_txns"),
-                    num_buys: pool.get("num_buys"),
-                    num_sells: pool.get("num_sells"),
-                    num_holders: pool.get("num_holders"),
-                    supply: pool.get("token_supply"),
-                    token_image: pool.get("image"),
-                    dev_wallet_funding: if let Some(funding_wallet) =
-                        pool.get::<Option<String>, _>("funding_wallet_address")
-                    {
+                    pair_address: pool.pool_address,
+                    liquidity_sol: Decimal18::from_bits(*pool.liquidity_sol.as_bits()),
+                    liquidity_token: Decimal18::from_bits(*pool.liquidity_token.as_bits()),
+                    token_address: pool.mint_address,
+                    bonding_curve_percent: Decimal18::from_bits(
+                        *pool.bonding_curve_percent.as_bits(),
+                    ),
+                    token_name: Some(pool.name),
+                    token_symbol: Some(pool.symbol),
+                    token_decimals: pool.decimals as u8,
+                    creator: pool.creator,
+                    protocol: pool.factory,
+                    website: pool.website,
+                    twitter: pool.twitter,
+                    telegram: pool.telegram,
+                    top10_holders_percent,
+                    dev_holds_percent,
+                    snipers_holds_percent,
+                    volume_sol: Decimal18::from_bits(*pool.volume_sol.as_bits()),
+                    market_cap_sol,
+                    created_at: pool.created_at,
+                    migration_count: pool.migration_count as i64,
+                    num_txns: pool.num_txns,
+                    num_buys: pool.num_buys,
+                    num_sells: pool.num_sells,
+                    num_holders: pool.num_holders as i64,
+                    supply: Decimal18::from_bits(*pool.token_supply.as_bits()),
+                    token_image: pool.image,
+                    dev_wallet_funding: if let Some(funding_wallet) = pool.funding_wallet_address {
                         Some(DevWalletFunding {
                             funding_wallet_address: funding_wallet,
-                            wallet_address: pool.get::<String, _>("wallet_address"),
-                            amount_sol: pool.get("amount_sol"),
-                            hash: pool.get::<String, _>("transfer_hash"),
-                            funded_at: pool.get::<DateTime<Utc>, _>("funded_at"),
+                            wallet_address: pool.wallet_address.unwrap_or_default(),
+                            amount_sol: to_decimal(pool.amount_sol.unwrap_or_default()),
+                            hash: pool.transfer_hash.unwrap_or_default(),
+                            funded_at: pool.funded_at.unwrap_or(Utc::now()),
                         })
                     } else {
                         None

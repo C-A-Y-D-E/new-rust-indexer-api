@@ -1,13 +1,15 @@
-use std::str::FromStr;
+use std::{i32, str::FromStr};
 
+use clickhouse::{Client, Row, error::Result};
 use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive;
 use serde::{Deserialize, Serialize};
 use solana_signature::Signature;
 use spl_token::solana_program::pubkey::Pubkey;
-use sqlx::prelude::FromRow;
 
-#[derive(Debug, FromRow, Clone, Serialize, Deserialize)]
+use crate::utils::Decimal18;
+
+#[derive(Debug, Row, Serialize, Deserialize)]
 pub struct Token {
     pub hash: Signature,
     pub mint_address: Pubkey,
@@ -26,26 +28,24 @@ pub struct Token {
     pub program_id: Pubkey,
 }
 
-#[derive(Debug, FromRow, Serialize, Deserialize)]
+#[derive(Debug, Row, Serialize, Deserialize)]
 pub struct DBToken {
     pub hash: String,
     pub mint_address: String,
     pub name: String,
     pub symbol: String,
-    pub decimals: i16, // SMALLINT
+    pub decimals: i8,
     pub uri: String,
     pub mint_authority: Option<String>,
-    pub supply: Decimal,
+    pub supply: Decimal18,
     pub freeze_authority: Option<String>,
-    pub slot: i64, // Changed from Decimal to i64 (BIGINT)
+    pub slot: i64,
     pub image: Option<String>,
     pub twitter: Option<String>,
     pub telegram: Option<String>,
     pub website: Option<String>,
     pub program_id: String,
 }
-
-
 
 impl TryFrom<DBToken> for Token {
     type Error = String;
@@ -57,7 +57,7 @@ impl TryFrom<DBToken> for Token {
                 .map_err(|_| "parse mint address".to_string())?,
             name: Some(db_token.name),
             symbol: Some(db_token.symbol),
-            decimals: Some(db_token.decimals as u8),
+            decimals: db_token.decimals.to_u8(),
             uri: Some(db_token.uri),
             mint_authority: db_token.mint_authority.and_then(|fa| {
                 Pubkey::from_str(&fa)
@@ -71,8 +71,8 @@ impl TryFrom<DBToken> for Token {
                     .ok()
             }),
 
-            supply: db_token.supply.to_u64().ok_or("supply to u64")?,
-            slot: db_token.slot as u64, // Convert i64 to u64
+            supply: db_token.supply.to_decimal(i32::MAX).0 as u64,
+            slot: db_token.slot.to_u64().ok_or("slot to u64")?,
             image: db_token.image,
             twitter: db_token.twitter,
             telegram: db_token.telegram,
@@ -82,8 +82,6 @@ impl TryFrom<DBToken> for Token {
         })
     }
 }
-
-
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TokenMetadata {
@@ -135,15 +133,15 @@ pub struct TokenInitializeMint {
     pub program_id: Pubkey,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Row)]
 
 pub struct DBTokenInitializeMint {
     pub mint_address: String,
-    pub decimals: Decimal,
+    pub decimals: i8,
     pub mint_authority: String,
     pub freeze_authority: Option<String>,
     pub hash: String,
-    pub slot: Decimal,
+    pub slot: i64,
     pub program_id: String,
 }
 
@@ -151,13 +149,13 @@ impl From<TokenInitializeMint> for DBTokenInitializeMint {
     fn from(token_initialize_mint: TokenInitializeMint) -> Self {
         Self {
             mint_address: token_initialize_mint.mint_address.to_string(),
-            decimals: Decimal::from(token_initialize_mint.decimals),
+            decimals: token_initialize_mint.decimals as i8,
             mint_authority: token_initialize_mint.mint_authority.to_string(),
             freeze_authority: token_initialize_mint
                 .freeze_authority
                 .map(|fa| fa.to_string()),
             hash: token_initialize_mint.hash.to_string(),
-            slot: Decimal::from(token_initialize_mint.slot),
+            slot: token_initialize_mint.slot as i64,
             program_id: token_initialize_mint.program_id.to_string(),
         }
     }
@@ -171,14 +169,14 @@ pub struct TokenSupplyUpdate {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct DBTokenSupplyUpdate {
-    pub supply: Decimal,
+    pub supply: i64,
     pub mint_address: String,
 }
 
 impl From<TokenSupplyUpdate> for DBTokenSupplyUpdate {
     fn from(token_supply_update: TokenSupplyUpdate) -> Self {
         Self {
-            supply: Decimal::from(token_supply_update.supply),
+            supply: token_supply_update.supply as i64,
             mint_address: token_supply_update.mint_address.to_string(),
         }
     }

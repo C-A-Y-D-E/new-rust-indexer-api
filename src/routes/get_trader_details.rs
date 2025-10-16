@@ -10,7 +10,7 @@ use serde_json::json;
 use spl_token::solana_program::pubkey::Pubkey;
 use tracing::{error, warn};
 
-use crate::services::db::DbService;
+use crate::services::clickhouse::ClickhouseService;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TraderParams {
@@ -22,7 +22,7 @@ pub struct TraderParams {
 
 pub async fn get_trader_details(
     Query(query): Query<TraderParams>,
-    State(db): State<DbService>,
+    State(db): State<ClickhouseService>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let creator = Pubkey::from_str(&query.creator).map_err(|e| {
         warn!(?e, "failed to encode creator in get_trader_details");
@@ -33,10 +33,7 @@ pub async fn get_trader_details(
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
     match db
-        .get_trader_details(
-            creator.to_string(),
-            pool_address.to_string(),
-        )
+        .get_trader_details(creator.to_string(), pool_address.to_string())
         .await
     {
         Ok(data) => Ok(Json(json!(data))),

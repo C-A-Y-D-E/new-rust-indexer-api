@@ -1,29 +1,29 @@
 use crate::{
     models::{pool::DBPool, swap::DBSwap},
     routes::{
-        get_candlestick::get_candlestick, get_holders::get_holders, get_pair_info::get_pair_info,
-        get_token_info::get_token_info, get_top_traders::get_top_traders,
-        get_trader_details::get_trader_details, get_trades::get_trades,
-        last_transaction::get_last_transaction, pool_report::get_pool_report, pulse::pulse,
-        search::search_pools,
+        // get_trades::get_trades,
+        get_candlestick::get_candlestick,
+        get_holders::get_holders,
+        get_pair_info::get_pair_info,
+        get_token_info::get_token_info,
+        get_top_traders::{self, get_top_traders},
+        get_trader_details::{self, get_trader_details},
+        get_trades::get_trades,
+        last_transaction::get_last_transaction,
+        pool_report::get_pool_report,
+        pulse::pulse,
+        search::search_pools, // search::search_pools,
     },
-    services::db::{DbService, PoolEvent},
-    types::pulse::{DevWalletFunding, PulseDataResponse},
-    websocket::{new_pool_event::on_new_pool_event, new_swap_event::PoolManager, on_connect},
+    services::clickhouse::ClickhouseService,
+    websocket::on_connect,
 };
 use axum::{
     Router,
     routing::{get, post},
 };
-use chrono::{DateTime, Utc};
-use futures_util::TryStreamExt;
-use rust_decimal::prelude::ToPrimitive;
-use serde_json::Value;
-use sqlx::{PgPool, Row, postgres::PgPoolOptions};
 
-use rust_decimal::{Decimal, prelude::FromPrimitive};
 use socketioxide::SocketIo;
-use sqlx::{Postgres, postgres::PgListener};
+
 use tower::ServiceBuilder;
 use tower_http::cors::CorsLayer;
 use tracing::info;
@@ -44,60 +44,12 @@ async fn root() -> &'static str {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenv::dotenv().ok();
-    let db = DbService::init().await;
+    // let db = DbService::init().await;
+    let clickhouse = ClickhouseService::init().await;
     tracing::subscriber::set_global_default(FmtSubscriber::default())?;
 
     let (layer, io) = SocketIo::new_layer();
 
-    // Store a reference to the Socket.IO instance
-    let io_clone = io.clone();
-    let db_clone = db.clone();
-    // Spawn the pool event listener in a separate task
-    tokio::spawn(async move {
-        let mut listener = PgListener::connect_with(&db_clone.pool).await.unwrap();
-        listener
-            .listen_all(vec!["pool_inserted", "swap_inserted"])
-            .await
-            .unwrap();
-        let mut stream = listener.into_stream();
-        let recent_pools = db_clone.get_24hr_recent_pools().await.unwrap_or(Vec::new());
-        let mut pool_manager = PoolManager::new(recent_pools);
-        while let Ok(Some(notification)) = stream.try_next().await {
-            if notification.channel() == "pool_inserted" {
-                match on_new_pool_event(&notification, &db_clone).await {
-                    Ok(pulse_data) => {
-                        let _ = io_clone.emit("new-pair", &pulse_data.0).await;
-                        // pool_manager.update_pools(pulse_data.1).await;
-                    }
-                    Err(e) => {
-                        println!("Error: {:?}", e);
-                    }
-                }
-            }
-            if notification.channel() == "swap_inserted" {
-                let raw_notification =
-                    serde_json::from_str::<DBSwap>(notification.payload()).unwrap();
-                let swap = DBSwap::from(raw_notification);
-                let r = DBSwap::try_from(swap.clone()).unwrap();
-                // println!("raw_notification: {:?}", swap);
-                let _ = io_clone.emit(format!("s:{}", r.pool_address), &r).await;
-                // let pool_address = swap.pool_address;
-                // let batch = pool_manager.verify_and_add_pool(pool_address).await;
-
-                // if batch.is_some() && !batch.as_ref().unwrap().is_empty() {
-                //     let pulse_data = db_clone.get_batch_pool_data(&batch.unwrap()).await;
-                //     match pulse_data {
-                //         Ok(pulse_data) => {
-                //             let _ = io_clone.emit("update-pulse", &pulse_data).await;
-                //         }
-                //         Err(e) => {
-                //             println!("Error: {:?}", e);
-                //         }
-                //     }
-                // }
-            }
-        }
-    });
     // Connection to the socket start
     io.ns("/", on_connect);
     // Connection to the socket end
@@ -118,7 +70,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/pulse", post(pulse))
         .route("/token-info/{pool_address}", get(get_token_info))
         .route("/trader-details", get(get_trader_details))
-        .with_state(db)
+        .with_state(clickhouse)
         .layer(
             // Cors layer
             ServiceBuilder::new()

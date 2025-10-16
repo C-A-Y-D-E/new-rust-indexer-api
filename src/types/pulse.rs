@@ -3,6 +3,8 @@ use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use sqlx::prelude::FromRow;
 
+use crate::utils::Decimal18;
+
 // {
 //     "pairAddress": "9Ck8DLv2Us3M6R5CVXNt1yS4mYqKA5GnDRnhiWJgcSmu",
 //     "tokenAddress": "5vKjABrQXiUnfxRj8mkUC1ASUooHzRtxKQEVdc8ppump",
@@ -70,19 +72,19 @@ pub struct PulseDataResponse {
     pub twitter: Option<String>,
     pub telegram: Option<String>,
     // pub discord: Option<String>,
-    pub top10_holders_percent: Decimal,
-    pub dev_holds_percent: Decimal,
-    pub snipers_holds_percent: Decimal,
+    pub top10_holders_percent: Decimal18,
+    pub dev_holds_percent: Decimal18,
+    pub snipers_holds_percent: Decimal18,
     // pub insiders_hold_percent: f64,
     // pub bundlers_hold_percent: f64,
-    pub volume_sol: Decimal,
-    pub market_cap_sol: Decimal,
+    pub volume_sol: Decimal18,
+    pub market_cap_sol: Decimal18,
 
     // pub fees_sol: f64,
-    pub liquidity_sol: Decimal,
-    pub liquidity_token: Decimal,
-    pub bonding_curve_percent: Decimal,
-    pub supply: Decimal,
+    pub liquidity_sol: Decimal18,
+    pub liquidity_token: Decimal18,
+    pub bonding_curve_percent: Decimal18,
+    pub supply: Decimal18,
     pub num_txns: i64,
     pub num_buys: i64,
     pub num_sells: i64,

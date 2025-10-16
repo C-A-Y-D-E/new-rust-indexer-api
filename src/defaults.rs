@@ -1,5 +1,12 @@
 use serde::{Deserialize, Serialize};
-
+#[derive(Debug, Serialize, Deserialize)]
+pub struct QuoteTokenData {
+    pub address: String,
+    pub name: String,
+    pub symbol: String,
+    pub decimals: u8,
+    pub logo: String,
+}
 #[derive(Debug, Serialize, Deserialize)]
 pub struct QuoteToken {
     pub address: &'static str,

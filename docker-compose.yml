@@ -5,7 +5,10 @@ services:
     platform: linux/arm64 # Ensure ARM64
     restart: unless-stopped
     environment:
-      DATABASE_URL: "postgres://postgres:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}"
+      CLICKHOUSE_URL: "http://clickhouse:8123"
+      CLICKHOUSE_USER: "default"
+      CLICKHOUSE_PASSWORD: "${CLICKHOUSE_PASSWORD}"
+      CLICKHOUSE_DATABASE: "${CLICKHOUSE_DATABASE}"
     ports:
       - 3001:3001
     networks:

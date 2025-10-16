@@ -5,9 +5,6 @@ on:
     branches:
       - main
 
-env:
-  SQLX_OFFLINE: true
-
 jobs:
   build:
     runs-on: [self-hosted, ARM64]
@@ -64,8 +61,9 @@ jobs:
           script: |
             docker network create shared || true
             cd ~/index-api
-            export POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}
-            export POSTGRES_DB=${{ secrets.POSTGRES_DB }}
+
+            export CLICKHOUSE_PASSWORD=${{ secrets.CLICKHOUSE_PASSWORD }}
+            export CLICKHOUSE_DATABASE=${{ secrets.CLICKHOUSE_DATABASE }}
             # Pull latest images and deploy
             docker compose -p index-api pull api
             docker compose -p index-api up -d api

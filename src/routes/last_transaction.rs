@@ -13,7 +13,7 @@ use serde_json::json;
 use spl_token::solana_program::pubkey::Pubkey;
 use tracing::warn;
 
-use crate::{models::swap::SwapType, services::db::DbService};
+use crate::{models::swap::SwapType, services::clickhouse::ClickhouseService};
 
 #[derive(Debug, Serialize, Deserialize)]
 struct LastTransactionResponse {
@@ -32,7 +32,7 @@ struct LastTransactionResponse {
 }
 
 pub async fn get_last_transaction(
-    db: State<DbService>,
+    db: State<ClickhouseService>,
     Path(address): Path<String>,
 ) -> Result<Json<serde_json::Value>, axum::http::StatusCode> {
     let pool_address = Pubkey::from_str(&address).map_err(|_| {
@@ -43,26 +43,9 @@ pub async fn get_last_transaction(
         StatusCode::BAD_REQUEST
     })?;
 
-    let last_transaction = db
-        .get_last_transaction(pool_address.to_string())
-        .await;
+    let last_transaction = db.get_last_transaction(pool_address.to_string()).await;
     match last_transaction {
-        Ok(Some(swap)) => {
-            let response = LastTransactionResponse {
-                pool_address: pool_address.to_string(),
-                creator: swap.creator.to_string(),
-                base_reserve: swap.base_reserve,
-                quote_reserve: swap.quote_reserve,
-                price_sol: swap.price_sol,
-                swap_type: swap.swap_type,
-                hash: swap.hash.to_string(),
-                base_amount: swap.base_amount,
-                quote_amount: swap.quote_amount,
-                slot: swap.slot,
-                created_at: swap.created_at,
-            };
-            Ok(Json(json!(response)))
-        }
+        Ok(Some(swap)) => Ok(Json(json!(swap))),
         Ok(None) => {
             return Err(axum::http::StatusCode::NOT_FOUND);
         }
@@ -70,4 +53,5 @@ pub async fn get_last_transaction(
             return Err(axum::http::StatusCode::INTERNAL_SERVER_ERROR);
         }
     }
+    // return Err(axum::http::StatusCode::NOT_FOUND);
 }

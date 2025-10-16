@@ -11,7 +11,7 @@ use serde_json::json;
 use spl_token::solana_program::pubkey::Pubkey;
 use tracing::{error, warn};
 
-use crate::services::db::DbService;
+use crate::services::clickhouse::ClickhouseService;
 
 #[derive(Debug, Serialize, Deserialize)]
 
@@ -28,10 +28,9 @@ fn parse_ymd_to_utc(date: &str) -> Result<DateTime<Utc>, StatusCode> {
 }
 
 pub async fn get_trades(
-    db: State<DbService>,
+    db: State<ClickhouseService>,
     Query(params): Query<GetTradesParams>,
 ) -> Result<Json<serde_json::Value>, axum::http::StatusCode> {
-
     let pool_address = Pubkey::from_str(&params.pool_address).map_err(|e| {
         warn!(?e, "failed to encode pool_address in get_trader_details");
         StatusCode::INTERNAL_SERVER_ERROR
