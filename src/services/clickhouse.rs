@@ -210,33 +210,26 @@ impl ClickhouseService {
 
         // 2. Get the base token info
         let token_query = r#"
-            SELECT
-                i.hash as hash,
-                i.mint_address as mint_address,
-                COALESCE(m.name, '') as name,
-                COALESCE(m.symbol, '') as symbol,
-                i.decimals as decimals,
-                COALESCE(m.uri, '') as uri,
-                COALESCE(a.mint_authority, i.mint_authority) as mint_authority,
-                COALESCE(s.total_supply, 0) / pow(10, i.decimals) as supply,
-                COALESCE(a.freeze_authority, i.freeze_authority) as freeze_authority,
-                i.slot as slot,
-                m.image as image,
-                m.twitter as twitter,
-                m.telegram as telegram,
-                m.website as website,
-                i.program_id as program_id
-            FROM token_initialize_events i
-            LEFT JOIN (
-                SELECT mint_address, sum(total_raw_supply) as total_supply 
-                FROM token_supply_mv FINAL 
-                GROUP BY mint_address
-            ) s ON i.mint_address = s.mint_address
-            LEFT JOIN (SELECT * FROM token_latest_metadata_mv FINAL) m ON i.mint_address = m.mint_address
-            LEFT JOIN (SELECT * FROM token_latest_authority_mv FINAL) a ON i.mint_address = a.mint_address
-            WHERE i.mint_address = ?
-            LIMIT 1
-        "#;
+        SELECT
+            hash,
+            mint_address,
+            COALESCE(name, '') as name,
+            COALESCE(symbol, '') as symbol,
+            decimals,
+            COALESCE(uri, '') as uri,
+            mint_authority,
+            supply,
+            freeze_authority,
+            slot,
+            image,
+            twitter,
+            telegram,
+            website,
+            program_id
+        FROM tokens
+        WHERE mint_address = ?
+        LIMIT 1
+    "#;
 
         let token: DBToken = self
             .client
@@ -473,34 +466,27 @@ impl ClickhouseService {
             pools.slot as slot,
             pools.metadata as metadata,
             pools.created_at as created_at,
-            ti.hash AS token_hash,
-            ti.mint_address as mint_address,
-            COALESCE(tm.name, '') as name,
-            COALESCE(tm.symbol, '') as symbol,
-            ti.decimals as decimals,
-            COALESCE(tm.uri, '') as uri,
-            COALESCE(ta.mint_authority, ti.mint_authority) as mint_authority,
-            COALESCE(ts.total_supply, 0) / pow(10, ti.decimals) as supply,
-            COALESCE(ta.freeze_authority, ti.freeze_authority) as freeze_authority,
-            ti.slot AS token_slot,
-            tm.image as image,
-            tm.twitter as twitter,
-            tm.telegram as telegram,
-            tm.website as website,
-            ti.program_id as program_id
+            t.hash AS token_hash,
+            t.mint_address as mint_address,
+            COALESCE(t.name, '') as name,
+            COALESCE(t.symbol, '') as symbol,
+            t.decimals as decimals,
+            COALESCE(t.uri, '') as uri,
+            t.mint_authority as mint_authority,
+            t.supply as supply,
+            t.freeze_authority as freeze_authority,
+            t.slot AS token_slot,
+            t.image as image,
+            t.twitter as twitter,
+            t.telegram as telegram,
+            t.website as website,
+            t.program_id as program_id
         FROM pools
         LEFT JOIN (SELECT * FROM pool_curve_updates FINAL) pcu ON pools.pool_address = pcu.pool_address
-        INNER JOIN token_initialize_events ti ON pools.token_base_address = ti.mint_address
-        LEFT JOIN (
-            SELECT mint_address, sum(total_raw_supply) as total_supply 
-            FROM token_supply_mv FINAL 
-            GROUP BY mint_address
-        ) ts ON ti.mint_address = ts.mint_address
-        LEFT JOIN (SELECT * FROM token_latest_metadata_mv FINAL) tm ON ti.mint_address = tm.mint_address
-        LEFT JOIN (SELECT * FROM token_latest_authority_mv FINAL) ta ON ti.mint_address = ta.mint_address
+        INNER JOIN tokens t ON pools.token_base_address = t.mint_address
         WHERE pools.pool_address = ? OR pools.token_base_address = ?
         LIMIT 1
-        "#;
+    "#;
 
         // Use a struct for strict schema alignment (schema: 31 columns, struct: 31 fields)
         #[derive(Debug, serde::Deserialize, Row, Serialize)]
