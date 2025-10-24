@@ -2,17 +2,16 @@ use std::str::FromStr;
 
 use chrono::{DateTime, Utc};
 
-use clickhouse::{Client, Row, error::Result, sql::Identifier};
+use clickhouse::Row;
 
+use rust_decimal::Decimal;
+use rust_decimal::prelude::ToPrimitive;
 use serde::{Deserialize, Serialize};
 use solana_signature::Signature;
 use spl_token::solana_program::pubkey::Pubkey;
-use sqlx::prelude::FromRow;
 
-use crate::utils::Decimal18;
+#[derive(Debug, Clone, Serialize, Deserialize)]
 
-#[derive(Debug, sqlx::Type, Clone, Serialize, Deserialize)]
-#[sqlx(type_name = "swap_type")]
 pub enum SwapType {
     BUY,
     SELL,
@@ -43,17 +42,22 @@ impl SwapType {
     }
 }
 
-#[derive(Debug, FromRow, Clone, Row, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Swap {
     pub creator: Pubkey,
     pub pool_address: Pubkey,
     pub swap_type: SwapType,
     pub hash: Signature,
-    pub base_reserve: Decimal18,
-    pub quote_reserve: Decimal18,
-    pub price_sol: Decimal18,
-    pub base_amount: Decimal18,
-    pub quote_amount: Decimal18,
+
+    pub base_reserve: f64,
+
+    pub quote_reserve: f64,
+
+    pub price_sol: f64,
+
+    pub base_amount: f64,
+
+    pub quote_amount: f64,
     pub slot: u64,
 }
 
@@ -61,18 +65,22 @@ pub struct Swap {
 pub struct DBSwap {
     pub creator: String,
     pub pool_address: String,
-    pub hash: String,
-    pub base_amount: Decimal18,
-    pub quote_amount: Decimal18,
-    pub base_reserve: Decimal18,
-    pub quote_reserve: Decimal18,
-    pub price_sol: Decimal18,
-    pub swap_type: String,
-    pub slot: i64,
+    pub hash: String, // Moved to 3rd
+
+    pub base_amount: f64, // Moved to 4th
+
+    pub quote_amount: f64, // Moved to 5th
+
+    pub base_reserve: f64, // Moved to 6th
+
+    pub quote_reserve: f64, // Moved to 7th
+
+    pub price_sol: f64,    // Moved to 8th
+    pub swap_type: String, // Moved to 9th
+    pub slot: i64,         // Moved to 10th
     #[serde(with = "clickhouse::serde::chrono::datetime")]
-    pub created_at: DateTime<Utc>,
-    // #[serde(with = "clickhouse::serde::chrono::datetime64::secs")]
-    // pub updated_at: DateTime<Utc>,
+    pub created_at: DateTime<Utc>, // Remove serde annotation
+                           // pub updated_at: DateTime<Utc>, // Remove serde annotation
 }
 
 impl From<Swap> for DBSwap {

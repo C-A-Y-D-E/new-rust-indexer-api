@@ -24,9 +24,9 @@ pub struct Pool {
     pub token_quote_address: Pubkey,
     pub pool_base_address: Pubkey,
     pub pool_quote_address: Pubkey,
-    pub curve_percentage: Option<Decimal18>,
-    pub initial_token_base_reserve: Decimal18,
-    pub initial_token_quote_reserve: Decimal18,
+
+    pub initial_token_base_reserve: f64,
+    pub initial_token_quote_reserve: f64,
     pub slot: u64,
     pub creator: Pubkey,
     pub hash: Signature,
@@ -42,9 +42,9 @@ pub struct DBPool {
     pub token_quote_address: String,
     pub pool_base_address: String,
     pub pool_quote_address: String,
-    pub curve_percentage: Option<Decimal18>,
-    pub initial_token_base_reserve: Decimal18,
-    pub initial_token_quote_reserve: Decimal18,
+
+    pub initial_token_base_reserve: f64,
+    pub initial_token_quote_reserve: f64,
     pub slot: i64,
     pub creator: String,
     pub hash: String,
@@ -52,8 +52,6 @@ pub struct DBPool {
     pub metadata: String,
     #[serde(with = "clickhouse::serde::chrono::datetime")]
     pub created_at: DateTime<Utc>,
-    #[serde(with = "clickhouse::serde::chrono::datetime")]
-    pub updated_at: DateTime<Utc>,
 }
 
 impl From<Pool> for DBPool {
@@ -68,7 +66,7 @@ impl From<Pool> for DBPool {
             token_quote_address: pool.token_quote_address.to_string(),
             pool_base_address: pool.pool_base_address.to_string(),
             pool_quote_address: pool.pool_quote_address.to_string(),
-            curve_percentage: pool.curve_percentage,
+
             initial_token_base_reserve: pool.initial_token_base_reserve,
             initial_token_quote_reserve: pool.initial_token_quote_reserve,
             slot: pool.slot as i64,
@@ -76,7 +74,6 @@ impl From<Pool> for DBPool {
             hash: pool.hash.to_string(),
             metadata: pool.metadata.to_string(),
             created_at: now,
-            updated_at: now,
         }
     }
 }
@@ -99,7 +96,7 @@ impl TryFrom<DBPool> for Pool {
                 .map_err(|_| "parse pool base address".to_string())?,
             pool_quote_address: Pubkey::from_str(&db_pool.pool_quote_address)
                 .map_err(|_| "parse pool quote address".to_string())?,
-            curve_percentage: db_pool.curve_percentage,
+
             initial_token_base_reserve: db_pool.initial_token_base_reserve,
             initial_token_quote_reserve: db_pool.initial_token_quote_reserve,
             slot: db_pool.slot as u64,

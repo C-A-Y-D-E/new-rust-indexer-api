@@ -10,10 +10,11 @@ use crate::{
 pub struct TopTrader {
     creator: String,
     is_sniper: bool,
-    base_bought: Decimal18,
-    base_sold: Decimal18,
-    quote_bought: Decimal18,
-    quote_sold: Decimal18,
+    base_bought: f64,
+    base_sold: f64,
+    quote_bought: f64,
+    quote_sold: f64,
+    holding_base_token: f64,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -27,6 +28,6 @@ pub struct HolderResponse {
     pub account: String,
     pub mint: String,
     pub decimals: u8,
-    pub amount: Decimal18,
-    pub delegated_amount: Decimal18,
+    pub amount: f64,
+    pub delegated_amount: i64,
 }

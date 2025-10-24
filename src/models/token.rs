@@ -1,4 +1,4 @@
-use std::{i32, str::FromStr};
+use std::str::FromStr;
 
 use clickhouse::{Client, Row, error::Result};
 use rust_decimal::Decimal;
@@ -7,9 +7,7 @@ use serde::{Deserialize, Serialize};
 use solana_signature::Signature;
 use spl_token::solana_program::pubkey::Pubkey;
 
-use crate::utils::Decimal18;
-
-#[derive(Debug, Row, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Token {
     pub hash: Signature,
     pub mint_address: Pubkey,
@@ -28,7 +26,7 @@ pub struct Token {
     pub program_id: Pubkey,
 }
 
-#[derive(Debug, Row, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Row)]
 pub struct DBToken {
     pub hash: String,
     pub mint_address: String,
@@ -37,7 +35,7 @@ pub struct DBToken {
     pub decimals: i8,
     pub uri: String,
     pub mint_authority: Option<String>,
-    pub supply: Decimal18,
+    pub supply: f64,
     pub freeze_authority: Option<String>,
     pub slot: i64,
     pub image: Option<String>,
@@ -71,7 +69,7 @@ impl TryFrom<DBToken> for Token {
                     .ok()
             }),
 
-            supply: db_token.supply.to_decimal(i32::MAX).0 as u64,
+            supply: db_token.supply.to_u64().ok_or("supply to u64")?,
             slot: db_token.slot.to_u64().ok_or("slot to u64")?,
             image: db_token.image,
             twitter: db_token.twitter,
@@ -93,6 +91,8 @@ pub struct TokenMetadata {
     pub twitter: Option<String>,
     pub telegram: Option<String>,
     pub website: Option<String>,
+    pub hash: Signature,
+    pub slot: u64,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -105,6 +105,8 @@ pub struct DBTokenMetadata {
     pub twitter: Option<String>,
     pub telegram: Option<String>,
     pub website: Option<String>,
+    pub slot: i64,
+    pub hash: String,
 }
 
 impl From<TokenMetadata> for DBTokenMetadata {
@@ -118,6 +120,8 @@ impl From<TokenMetadata> for DBTokenMetadata {
             twitter: token_metadata.twitter,
             telegram: token_metadata.telegram,
             website: token_metadata.website,
+            hash: token_metadata.hash.to_string(),
+            slot: token_metadata.slot as i64,
         }
     }
 }
@@ -165,19 +169,25 @@ impl From<TokenInitializeMint> for DBTokenInitializeMint {
 pub struct TokenSupplyUpdate {
     pub supply: u64,
     pub mint_address: Pubkey,
+    pub hash: Signature,
+    pub slot: u64,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Row)]
 pub struct DBTokenSupplyUpdate {
-    pub supply: i64,
+    pub supply: u64,
     pub mint_address: String,
+    pub hash: String,
+    pub slot: i64,
 }
 
 impl From<TokenSupplyUpdate> for DBTokenSupplyUpdate {
     fn from(token_supply_update: TokenSupplyUpdate) -> Self {
         Self {
-            supply: token_supply_update.supply as i64,
+            supply: token_supply_update.supply,
             mint_address: token_supply_update.mint_address.to_string(),
+            hash: token_supply_update.hash.to_string(),
+            slot: token_supply_update.slot as i64,
         }
     }
 }
@@ -186,12 +196,16 @@ impl From<TokenSupplyUpdate> for DBTokenSupplyUpdate {
 pub struct TokenMintAuthorityUpdate {
     pub mint_address: Pubkey,
     pub mint_authority: Option<Pubkey>,
+    pub hash: Signature,
+    pub slot: u64,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct DBTokenMintAuthorityUpdate {
     pub mint_address: String,
     pub mint_authority: Option<String>,
+    pub hash: String,
+    pub slot: i64,
 }
 
 impl From<TokenMintAuthorityUpdate> for DBTokenMintAuthorityUpdate {
@@ -201,6 +215,8 @@ impl From<TokenMintAuthorityUpdate> for DBTokenMintAuthorityUpdate {
             mint_authority: token_mint_authority_update
                 .mint_authority
                 .map(|fa| fa.to_string()),
+            hash: token_mint_authority_update.hash.to_string(),
+            slot: token_mint_authority_update.slot as i64,
         }
     }
 }

@@ -37,13 +37,13 @@ pub struct ClickhouseService {
 
 pub struct PoolAndTokenData {
     pub pool_address: String,
-    pub base_liquidity: Decimal18,
-    pub quote_liquidity: Decimal18,
-    pub marketcap_sol: Decimal18,
+    pub base_liquidity: f64,
+    pub quote_liquidity: f64,
+    pub marketcap_sol: f64,
     pub factory: String,
     pub pre_factory: Option<String>,
-    pub curve_percentage: Option<Decimal18>,
-    pub volume_quote: Decimal18,
+
+    pub volume_quote: f64,
     pub base_token: DBToken,
     pub quote_token: QuoteTokenData,
 }
@@ -93,28 +93,30 @@ impl ClickhouseService {
     }
     pub async fn search_pools(&self, pool_address: String) -> Result<Vec<DBPool>> {
         let query = r#"
-            SELECT 
-                pool_address,
-                factory,
-                pre_factory,
-                reversed,
-                token_base_address,
-                token_quote_address,
-                pool_base_address,
-                pool_quote_address,
-                initial_token_base_reserve,
-                initial_token_quote_reserve,
-                slot,
-                creator,
-                hash,
-                metadata,
-                created_at,
-                updated_at
-            FROM pools
-            WHERE pool_address = ?
-            ORDER BY pool_address DESC
-            LIMIT 10
-        "#;
+        SELECT 
+            pools.pool_address,
+            pools.factory,
+            pools.pre_factory,
+            pools.reversed,
+            pools.token_base_address,
+            pools.token_quote_address,
+            pools.pool_base_address,
+            pools.pool_quote_address,
+            pools.initial_token_base_reserve,
+            pools.initial_token_quote_reserve,
+            pools.slot,
+            pools.creator,
+            pools.hash,
+            pools.metadata,
+            pools.created_at,
+            COALESCE(pcu.curve_percentage, 0) as curve_percentage,
+            COALESCE(pcu.updated_at, pools.created_at) as updated_at
+        FROM pools
+        LEFT JOIN (SELECT * FROM pool_curve_updates FINAL) pcu ON pools.pool_address = pcu.pool_address
+        WHERE pools.pool_address = ?
+        ORDER BY pools.pool_address DESC
+        LIMIT 10
+    "#;
 
         let pools: Vec<DBPool> = self
             .client
@@ -132,24 +134,31 @@ impl ClickhouseService {
         // ClickHouse does not support ILIKE, so we use LIKE with lower() for case-insensitive search
         let query = r#"
             SELECT 
-                hash,
-                mint_address,
-                name,
-                symbol,
-                decimals,
-                uri,
-                mint_authority,
-                supply,
-                freeze_authority,
-                slot,
-                image,
-                twitter,
-                telegram,
-                website,
-                program_id
-            FROM tokens
-            WHERE lower(name) LIKE lower(?) OR lower(symbol) LIKE lower(?)
-            ORDER BY name DESC
+                i.hash as hash,
+                i.mint_address as mint_address,
+                COALESCE(m.name, '') as name,
+                COALESCE(m.symbol, '') as symbol,
+                i.decimals as decimals,
+                COALESCE(m.uri, '') as uri,
+                COALESCE(a.mint_authority, i.mint_authority) as mint_authority,
+                COALESCE(s.total_supply, 0) / pow(10, i.decimals) as supply,
+                COALESCE(a.freeze_authority, i.freeze_authority) as freeze_authority,
+                i.slot as slot,
+                m.image as image,
+                m.twitter as twitter,
+                m.telegram as telegram,
+                m.website as website,
+                i.program_id as program_id
+            FROM token_initialize_events i
+            LEFT JOIN (
+                SELECT mint_address, sum(total_raw_supply) as total_supply 
+                FROM token_supply_mv FINAL 
+                GROUP BY mint_address
+            ) s ON i.mint_address = s.mint_address
+            LEFT JOIN (SELECT * FROM token_latest_metadata_mv FINAL) m ON i.mint_address = m.mint_address
+            LEFT JOIN (SELECT * FROM token_latest_authority_mv FINAL) a ON i.mint_address = a.mint_address
+            WHERE lower(COALESCE(m.name, '')) LIKE lower(?) OR lower(COALESCE(m.symbol, '')) LIKE lower(?)
+            ORDER BY COALESCE(m.name, '') DESC
             LIMIT 10
         "#;
 
@@ -202,23 +211,30 @@ impl ClickhouseService {
         // 2. Get the base token info
         let token_query = r#"
             SELECT
-                hash,
-                mint_address,
-                name,
-                symbol,
-                uri,
-                mint_authority,
-                freeze_authority,
-                slot,
-                decimals,
-                supply,
-                image,
-                twitter,
-                telegram,
-                website,
-                program_id
-            FROM tokens
-            WHERE mint_address = ?
+                i.hash as hash,
+                i.mint_address as mint_address,
+                COALESCE(m.name, '') as name,
+                COALESCE(m.symbol, '') as symbol,
+                i.decimals as decimals,
+                COALESCE(m.uri, '') as uri,
+                COALESCE(a.mint_authority, i.mint_authority) as mint_authority,
+                COALESCE(s.total_supply, 0) / pow(10, i.decimals) as supply,
+                COALESCE(a.freeze_authority, i.freeze_authority) as freeze_authority,
+                i.slot as slot,
+                m.image as image,
+                m.twitter as twitter,
+                m.telegram as telegram,
+                m.website as website,
+                i.program_id as program_id
+            FROM token_initialize_events i
+            LEFT JOIN (
+                SELECT mint_address, sum(total_raw_supply) as total_supply 
+                FROM token_supply_mv FINAL 
+                GROUP BY mint_address
+            ) s ON i.mint_address = s.mint_address
+            LEFT JOIN (SELECT * FROM token_latest_metadata_mv FINAL) m ON i.mint_address = m.mint_address
+            LEFT JOIN (SELECT * FROM token_latest_authority_mv FINAL) a ON i.mint_address = a.mint_address
+            WHERE i.mint_address = ?
             LIMIT 1
         "#;
 
@@ -299,11 +315,11 @@ impl ClickhouseService {
             pool_address: pool.pool_address.clone(),
             base_liquidity: swap_row.base_reserve,
             quote_liquidity: swap_row.quote_reserve,
-            marketcap_sol: swap_row.price_sol.cmul(*token.supply.as_bits()).unwrap(),
+            marketcap_sol: swap_row.price_sol * token.supply,
             factory: pool.factory.clone(),
             pre_factory: pool.pre_factory.clone(),
-            curve_percentage: pool.curve_percentage,
-            volume_quote: volume_row.buy_volume.cadd(volume_row.sell_volume).unwrap(),
+
+            volume_quote: volume_row.buy_volume + volume_row.sell_volume,
             base_token: token,
             quote_token,
         }))
@@ -395,16 +411,29 @@ impl ClickhouseService {
               AND (swap_type = 'BUY' OR swap_type = 'SELL')
             ORDER BY slot ASC
             LIMIT 1
+        ),
+        pool_info AS (
+            SELECT token_base_address 
+            FROM pools 
+            WHERE pool_address = ?
         )
         SELECT
             s.creator,
-            SUM(CASE WHEN s.base_amount > 0 THEN s.base_amount ELSE 0 END) as base_bought,
-            SUM(CASE WHEN s.quote_amount > 0 THEN s.quote_amount ELSE 0 END) as quote_bought,
-            SUM(CASE WHEN s.base_amount < 0 THEN -s.base_amount ELSE 0 END) as base_sold,
-            SUM(CASE WHEN s.quote_amount < 0 THEN -s.quote_amount ELSE 0 END) as quote_sold,
-            max(s.slot = f.slot) as is_sniper
+            max(s.slot = f.slot) as is_sniper,
+            coalesce(sumIf(s.base_amount, s.swap_type = 'BUY'), 0) as base_bought,
+            coalesce(sumIf(s.base_amount, s.swap_type = 'SELL'), 0) as base_sold,
+            coalesce(sumIf(s.quote_amount, s.swap_type = 'BUY'), 0) as quote_bought,
+            coalesce(sumIf(s.quote_amount, s.swap_type = 'SELL'), 0) as quote_sold,
+            coalesce(max(a.amount) / pow(10, COALESCE(max(t.decimals), 0)), 0) as holding_base_token
         FROM swaps s
         CROSS JOIN first_swap f
+        CROSS JOIN pool_info pi
+        LEFT JOIN (
+            SELECT owner, mint, amount 
+            FROM accounts FINAL 
+            WHERE amount > 0
+        ) a ON a.owner = s.creator AND a.mint = pi.token_base_address
+        LEFT JOIN token_initialize_events t ON t.mint_address = pi.token_base_address
         WHERE s.pool_address = ?
           AND (s.swap_type = 'BUY' OR s.swap_type = 'SELL')
         GROUP BY s.creator
@@ -415,8 +444,9 @@ impl ClickhouseService {
         let traders: Vec<TopTrader> = self
             .client
             .query(query)
-            .bind(&pool_address)
-            .bind(&pool_address)
+            .bind(&pool_address) // For first_swap CTE
+            .bind(&pool_address) // For pool_info CTE
+            .bind(&pool_address) // For main WHERE clause
             .fetch_all()
             .await?;
 
@@ -427,40 +457,47 @@ impl ClickhouseService {
         warn!("Getting pair info for pool address: {}", pool_address);
         let query = r#"
         SELECT
-            pools.pool_address,
-            pools.pool_base_address,
-            pools.pool_quote_address,
-            pools.token_base_address,
-            pools.token_quote_address,
-            pools.creator,
-            pools.hash,
-            pools.factory,
-            pools.pre_factory,
-            pools.reversed,
-            pools.curve_percentage,
-            pools.initial_token_base_reserve,
-            pools.initial_token_quote_reserve,
-            pools.slot,
-            pools.metadata,
-            pools.created_at,
-            pools.updated_at,
-            tokens.hash AS token_hash,
-            tokens.mint_address,
-            tokens.name,
-            tokens.symbol,
-            tokens.decimals,
-            tokens.uri,
-            tokens.supply,
-            tokens.slot AS token_slot,
-            tokens.mint_authority,
-            tokens.freeze_authority,
-            tokens.image,
-            tokens.twitter,
-            tokens.telegram,
-            tokens.website,
-            tokens.program_id
+            pools.pool_address as pool_address,
+            pools.pool_base_address as pool_base_address,
+            pools.pool_quote_address as pool_quote_address,
+            pools.token_base_address as token_base_address,
+            pools.token_quote_address as token_quote_address,
+            pools.creator as creator,
+            pools.hash as hash,
+            pools.factory as factory,
+            pools.pre_factory as pre_factory,
+            pools.reversed as reversed,
+            COALESCE(pcu.curve_percentage, 0) as curve_percentage,
+            pools.initial_token_base_reserve as initial_token_base_reserve,
+            pools.initial_token_quote_reserve as initial_token_quote_reserve,
+            pools.slot as slot,
+            pools.metadata as metadata,
+            pools.created_at as created_at,
+            ti.hash AS token_hash,
+            ti.mint_address as mint_address,
+            COALESCE(tm.name, '') as name,
+            COALESCE(tm.symbol, '') as symbol,
+            ti.decimals as decimals,
+            COALESCE(tm.uri, '') as uri,
+            COALESCE(ta.mint_authority, ti.mint_authority) as mint_authority,
+            COALESCE(ts.total_supply, 0) / pow(10, ti.decimals) as supply,
+            COALESCE(ta.freeze_authority, ti.freeze_authority) as freeze_authority,
+            ti.slot AS token_slot,
+            tm.image as image,
+            tm.twitter as twitter,
+            tm.telegram as telegram,
+            tm.website as website,
+            ti.program_id as program_id
         FROM pools
-        INNER JOIN tokens ON pools.token_base_address = tokens.mint_address
+        LEFT JOIN (SELECT * FROM pool_curve_updates FINAL) pcu ON pools.pool_address = pcu.pool_address
+        INNER JOIN token_initialize_events ti ON pools.token_base_address = ti.mint_address
+        LEFT JOIN (
+            SELECT mint_address, sum(total_raw_supply) as total_supply 
+            FROM token_supply_mv FINAL 
+            GROUP BY mint_address
+        ) ts ON ti.mint_address = ts.mint_address
+        LEFT JOIN (SELECT * FROM token_latest_metadata_mv FINAL) tm ON ti.mint_address = tm.mint_address
+        LEFT JOIN (SELECT * FROM token_latest_authority_mv FINAL) ta ON ti.mint_address = ta.mint_address
         WHERE pools.pool_address = ? OR pools.token_base_address = ?
         LIMIT 1
         "#;
@@ -468,7 +505,6 @@ impl ClickhouseService {
         // Use a struct for strict schema alignment (schema: 31 columns, struct: 31 fields)
         #[derive(Debug, serde::Deserialize, Row, Serialize)]
         struct PairInfoRow {
-            // pools.* fields (match schema, omit anything not present in schema)
             pool_address: String,
             pool_base_address: String,
             pool_quote_address: String,
@@ -479,15 +515,13 @@ impl ClickhouseService {
             factory: String,
             pre_factory: Option<String>,
             reversed: bool,
-            curve_percentage: Option<Decimal18>,
-            initial_token_base_reserve: Decimal18,
-            initial_token_quote_reserve: Decimal18,
+            curve_percentage: f32,
+            initial_token_base_reserve: f64,
+            initial_token_quote_reserve: f64,
             slot: i64,
             metadata: String,
             #[serde(with = "clickhouse::serde::chrono::datetime")]
             created_at: DateTime<Utc>,
-            #[serde(with = "clickhouse::serde::chrono::datetime")]
-            updated_at: DateTime<Utc>,
 
             // tokens.* fields
             token_hash: String,
@@ -496,7 +530,7 @@ impl ClickhouseService {
             symbol: String,
             decimals: i8,
             uri: String,
-            supply: Decimal18,
+            supply: f64,
             token_slot: i64,
             mint_authority: Option<String>,
             freeze_authority: Option<String>,
@@ -530,13 +564,12 @@ impl ClickhouseService {
                     factory: row.factory,
                     pre_factory: row.pre_factory,
                     reversed: row.reversed,
-                    curve_percentage: row.curve_percentage,
+
                     initial_token_base_reserve: row.initial_token_base_reserve,
                     initial_token_quote_reserve: row.initial_token_quote_reserve,
                     slot: row.slot,
                     metadata: row.metadata.to_string(),
                     created_at: row.created_at,
-                    updated_at: row.updated_at,
                 },
                 base_token: DBToken {
                     mint_address: row.mint_address,
@@ -567,15 +600,19 @@ impl ClickhouseService {
     ) -> Result<Vec<HolderResponse>, clickhouse::error::Error> {
         let query = r#"
             SELECT 
-                accounts.owner as address,
+                assumeNotNull(accounts.owner) as address,
                 accounts.account as account,
-                accounts.mint as mint,
-                tokens.decimals as decimals,
-                CAST(accounts.amount / POW(10, tokens.decimals) AS Float64) as amount,
-                accounts.delegated_amount as delegated_amount
-            FROM accounts
-            INNER JOIN tokens ON accounts.mint = tokens.mint_address
-            WHERE accounts.mint = ? AND accounts.amount > 0
+                assumeNotNull(accounts.mint) as mint,
+                CAST(t.decimals AS UInt8) as decimals,
+                CAST(accounts.amount / POW(10, t.decimals) AS Float64) as amount,
+                COALESCE(accounts.delegated_amount, 0) as delegated_amount
+            FROM accounts FINAL
+            INNER JOIN token_initialize_events t ON accounts.mint = t.mint_address
+            WHERE accounts.mint = ? 
+              AND accounts.amount > 0
+              AND accounts.owner IS NOT NULL
+              AND accounts.mint IS NOT NULL
+              AND accounts.account IS NOT NULL
             ORDER BY amount DESC
             LIMIT 50
         "#;
@@ -700,14 +737,15 @@ WITH pool_info AS (
     WHERE p.pool_address = ?
 ),
 top10_holders AS (
-    SELECT toDecimal128(sum(amount), 18) AS top10_amount_raw
+    SELECT CAST(sum(x.amount) AS Float64) AS top10_amount_raw
     FROM (
         SELECT
             a.amount,
             row_number() OVER (ORDER BY a.amount DESC) AS rn
         FROM pool_info pi
-        JOIN accounts a ON a.mint = pi.token_base_address
-        WHERE NOT EXISTS (
+        JOIN (SELECT * FROM accounts FINAL) a ON a.mint = pi.token_base_address
+        WHERE a.amount > 0
+          AND NOT EXISTS (
             SELECT 1 FROM pool_info pi2 
             WHERE pi2.pool_address = a.owner 
                OR pi2.pool_base_address = a.owner 
@@ -717,43 +755,42 @@ top10_holders AS (
     WHERE rn <= 10
 ),
 dev_hold AS (
-    SELECT toDecimal128(coalesce(a.amount, 0), 18) AS dev_amount_raw
+    SELECT CAST(coalesce(a.amount, 0) AS Float64) AS dev_amount_raw
     FROM pool_info pi
-    LEFT JOIN accounts a
+    LEFT JOIN (SELECT * FROM accounts FINAL) a
         ON a.mint = pi.token_base_address
         AND a.owner = pi.creator
 ),
 bundlers_holds AS (
-    SELECT toDecimal128(coalesce(sum(s.base_amount), 0), 18) AS bundlers_amount_raw
+    SELECT CAST(coalesce(sum(s.base_amount), 0) AS Float64) AS bundlers_amount_raw
     FROM pool_info pi
-    JOIN swaps s ON s.pool_address = pi.pool_address
-    WHERE s.swap_type = 'BUY'
-        AND s.slot = pi.slot
-        AND NOT EXISTS (
-            SELECT 1 FROM pool_info pi2 
-            WHERE pi2.pool_address = s.creator 
-               OR pi2.pool_base_address = s.creator 
-               OR pi2.pool_quote_address = s.creator
-        )
+    LEFT JOIN swaps s ON s.pool_address = pi.pool_address
+    WHERE (s.swap_type = 'BUY' AND s.slot = pi.slot) OR s.swap_type IS NULL
+      AND (NOT EXISTS (
+          SELECT 1 FROM pool_info pi2 
+          WHERE pi2.pool_address = s.creator 
+             OR pi2.pool_base_address = s.creator 
+             OR pi2.pool_quote_address = s.creator
+      ) OR s.creator IS NULL)
 ),
 snipers_holds AS (
-    SELECT toDecimal128(coalesce(sum(s.base_amount), 0), 18) AS snipers_amount_raw
+    SELECT CAST(coalesce(sum(s.base_amount), 0) AS Float64) AS snipers_amount_raw
     FROM pool_info pi
-    JOIN swaps s ON s.pool_address = pi.pool_address
-    WHERE s.swap_type = 'BUY'
-        AND s.slot = pi.slot + 1
-        AND NOT EXISTS (
-            SELECT 1 FROM pool_info pi2 
-            WHERE pi2.pool_address = s.creator 
-               OR pi2.pool_base_address = s.creator 
-               OR pi2.pool_quote_address = s.creator
-        )
+    LEFT JOIN swaps s ON s.pool_address = pi.pool_address
+    WHERE (s.swap_type = 'BUY' AND s.slot = pi.slot + 1) OR s.swap_type IS NULL
+      AND (NOT EXISTS (
+          SELECT 1 FROM pool_info pi2 
+          WHERE pi2.pool_address = s.creator 
+             OR pi2.pool_base_address = s.creator 
+             OR pi2.pool_quote_address = s.creator
+      ) OR s.creator IS NULL)
 ),
 total_holders AS (
     SELECT count(DISTINCT a.owner) AS num_holders
     FROM pool_info pi
-    JOIN accounts a ON a.mint = pi.token_base_address
-    WHERE NOT EXISTS (
+    JOIN (SELECT * FROM accounts FINAL) a ON a.mint = pi.token_base_address
+    WHERE a.amount > 0
+      AND NOT EXISTS (
         SELECT 1 FROM pool_info pi2 
         WHERE pi2.pool_address = a.owner 
            OR pi2.pool_base_address = a.owner 
@@ -762,11 +799,16 @@ total_holders AS (
 ),
 tok AS (
     SELECT
-        t.mint_address,
-        t.decimals,
-        t.supply AS token_supply
-    FROM tokens t
-    JOIN pool_info pi ON t.mint_address = pi.token_base_address
+        i.mint_address,
+        i.decimals,
+        COALESCE(s.total_supply, 0) / pow(10, i.decimals) AS token_supply
+    FROM token_initialize_events i
+    LEFT JOIN (
+        SELECT mint_address, sum(total_raw_supply) as total_supply 
+        FROM token_supply_mv FINAL 
+        GROUP BY mint_address
+    ) s ON i.mint_address = s.mint_address
+    JOIN pool_info pi ON i.mint_address = pi.token_base_address
 )
 SELECT
     coalesce(th.top10_amount_raw, 0) AS top10_amount_raw,
@@ -774,15 +816,15 @@ SELECT
     coalesce(sh.snipers_amount_raw, 0) AS snipers_amount_raw,
     coalesce(t.num_holders, 0) AS num_holders,
     coalesce(tk.token_supply, 0) AS token_supply,
-    tk.decimals,
+    coalesce(tk.decimals, 0) AS decimals,
     coalesce(bh.bundlers_amount_raw, 0) AS bundlers_amount_raw
 FROM pool_info pi
-CROSS JOIN top10_holders th
-CROSS JOIN dev_hold d
-CROSS JOIN snipers_holds sh
-CROSS JOIN bundlers_holds bh
-CROSS JOIN total_holders t
-CROSS JOIN tok tk
+LEFT JOIN top10_holders th ON 1=1
+LEFT JOIN dev_hold d ON 1=1
+LEFT JOIN snipers_holds sh ON 1=1
+LEFT JOIN bundlers_holds bh ON 1=1
+LEFT JOIN total_holders t ON 1=1
+LEFT JOIN tok tk ON 1=1
         "#;
 
         let rows: Vec<TokenInfoRow> = match self
@@ -807,7 +849,7 @@ CROSS JOIN tok tk
             .ok_or_else(|| clickhouse::error::Error::Custom("No token info found".into()))?;
 
         // Calculate scale factor in Rust: 10^decimals
-        let scale_factor = Decimal18::from_bits(10i128.pow(row.decimals as u32));
+        let scale_factor = row.decimals as f64;
 
         let token_info = TokenInfo {
             bundlers_hold_percent: calculate_percentage(
@@ -842,27 +884,43 @@ CROSS JOIN tok tk
         pool_address: String,
     ) -> Result<Option<TopTrader>> {
         let query = r#"
+        WITH pool_info AS (
+            SELECT token_base_address 
+            FROM pools 
+            WHERE pool_address = ?
+        )
         SELECT
             s.creator,
-            coalesce(sum(s.base_amount) FILTER (WHERE s.base_amount > 0), 0) AS base_bought,
-            coalesce(sum(s.quote_amount) FILTER (WHERE s.quote_amount > 0), 0) AS quote_bought,
-            coalesce(-sum(s.base_amount) FILTER (WHERE s.base_amount < 0), 0) AS base_sold,
-            coalesce(-sum(s.quote_amount) FILTER (WHERE s.quote_amount < 0), 0) AS quote_sold,
+            coalesce(sumIf(s.base_amount, s.swap_type = 'BUY'), 0) AS base_bought,
+            coalesce(sumIf(s.quote_amount, s.swap_type = 'BUY'), 0) AS quote_bought,
+            coalesce(sumIf(s.base_amount, s.swap_type = 'SELL'), 0) AS base_sold,
+            coalesce(sumIf(s.quote_amount, s.swap_type = 'SELL'), 0) AS quote_sold,
+            coalesce(a.amount / pow(10, COALESCE(t.decimals, 0)), 0) AS holding_base_token,
             coalesce(max(
-                s.slot = (SELECT min(slot) FROM swaps WHERE pool_address = ?)
+                s.slot = (SELECT min(slot) FROM swaps WHERE pool_address = ? AND (swap_type = 'BUY' OR swap_type = 'SELL'))
             ), false) AS is_sniper
         FROM swaps s
+        CROSS JOIN pool_info pi
+        LEFT JOIN (
+            SELECT owner, mint, amount 
+            FROM accounts FINAL 
+            WHERE amount > 0
+        ) a ON a.owner = ? AND a.mint = pi.token_base_address
+        LEFT JOIN token_initialize_events t ON t.mint_address = pi.token_base_address
         WHERE s.pool_address = ?
             AND s.creator = ?
-        GROUP BY s.creator
+            AND (s.swap_type = 'BUY' OR s.swap_type = 'SELL')
+        GROUP BY s.creator, a.amount, t.decimals
         "#;
 
         let rows: Option<TopTrader> = self
             .client
             .query(query)
-            .bind(&pool_address)
-            .bind(&pool_address) // Second bind for the subquery
-            .bind(&creator)
+            .bind(&pool_address) // For pool_info CTE
+            .bind(&pool_address) // For subquery min(slot)
+            .bind(&creator) // For accounts JOIN
+            .bind(&pool_address) // For main WHERE s.pool_address
+            .bind(&creator) // For main WHERE s.creator
             .fetch_optional()
             .await?;
 

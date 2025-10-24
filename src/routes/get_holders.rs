@@ -7,7 +7,7 @@ use axum::{
 };
 use serde_json::json;
 use spl_token::solana_program::pubkey::Pubkey;
-use tracing::warn;
+use tracing::{error, warn};
 
 use crate::services::clickhouse::ClickhouseService;
 
@@ -20,8 +20,12 @@ pub async fn get_holders(
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
     let holders = db.get_holders(mint.to_string()).await;
+
     match holders {
         Ok(holders) => Ok(Json(json!(holders))),
-        Err(e) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+        Err(e) => {
+            error!("Error getting holders: {:?}", e);
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
     }
 }

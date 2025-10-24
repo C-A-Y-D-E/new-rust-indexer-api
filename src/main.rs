@@ -11,7 +11,7 @@ use crate::{
         get_trades::get_trades,
         last_transaction::get_last_transaction,
         pool_report::get_pool_report,
-        pulse::pulse,
+        // pulse::pulse,
         search::search_pools, // search::search_pools,
     },
     services::clickhouse::ClickhouseService,
@@ -67,7 +67,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             get(get_last_transaction),
         )
         .route("/pool-report", get(get_pool_report))
-        .route("/pulse", post(pulse))
+        // .route("/pulse", post(pulse))
         .route("/token-info/{pool_address}", get(get_token_info))
         .route("/trader-details", get(get_trader_details))
         .with_state(clickhouse)
