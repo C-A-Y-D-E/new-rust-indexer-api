@@ -14,13 +14,14 @@ use crate::{
         // pulse::pulse,
         search::search_pools, // search::search_pools,
     },
-    services::clickhouse::ClickhouseService,
+    services::{clickhouse::ClickhouseService, redis::subscribe_and_process},
     websocket::on_connect,
 };
 use axum::{
     Router,
     routing::{get, post},
 };
+use futures_util::StreamExt;
 
 use socketioxide::SocketIo;
 
@@ -46,9 +47,41 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenv::dotenv().ok();
     // let db = DbService::init().await;
     let clickhouse = ClickhouseService::init().await;
+    // let redis = RedisService::init().await;
     tracing::subscriber::set_global_default(FmtSubscriber::default())?;
 
     let (layer, io) = SocketIo::new_layer();
+    let io_clone = io.clone();
+    tokio::spawn(async move {
+        let client = redis::Client::open("redis://127.0.0.1/").unwrap();
+        let mut pubsub = client.get_async_pubsub().await.unwrap();
+
+        pubsub.subscribe("swap_created").await.unwrap();
+        pubsub.subscribe("pool_created").await.unwrap();
+
+        let mut stream = pubsub.on_message();
+
+        while let Some(msg) = stream.next().await {
+            let channel: String = msg.get_channel_name().to_string();
+            let payload: String = msg.get_payload().unwrap();
+
+            match channel.as_str() {
+                "swap_created" => {
+                    if let Ok(data) = serde_json::from_str::<DBSwap>(&payload) {
+                        let _ = io_clone
+                            .emit(format!("s:{}", data.pool_address), &data)
+                            .await;
+                    }
+                }
+                "pool_created" => {
+                    if let Ok(data) = serde_json::from_str::<DBPool>(&payload) {
+                        let _ = io_clone.emit("new-pair", &data).await;
+                    }
+                }
+                _ => {}
+            }
+        }
+    });
 
     // Connection to the socket start
     io.ns("/", on_connect);

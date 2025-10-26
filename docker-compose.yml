@@ -8,6 +8,7 @@ services:
       CLICKHOUSE_USER: "default"
       CLICKHOUSE_PASSWORD: "${CLICKHOUSE_PASSWORD}"
       CLICKHOUSE_DATABASE: "${CLICKHOUSE_DATABASE}"
+      REDIS_URL: "redis://redis:6379/"
     ports:
       - 3001:3001
     networks:

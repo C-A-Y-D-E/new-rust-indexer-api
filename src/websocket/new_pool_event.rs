@@ -9,7 +9,7 @@
 
 // use crate::{
 //     models::pool::DBPool,
-//     services::db::{DbService, PoolEvent},
+//     services::db::{Click, PoolEvent},
 //     types::pulse::{DevWalletFunding, PulseDataResponse},
 // };
 
