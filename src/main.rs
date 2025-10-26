@@ -53,7 +53,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (layer, io) = SocketIo::new_layer();
     let io_clone = io.clone();
     tokio::spawn(async move {
-        let client = redis::Client::open("redis://127.0.0.1/").unwrap();
+        let redis_url =
+            std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1/".to_string());
+        let client = redis::Client::open(redis_url).unwrap();
         let mut pubsub = client.get_async_pubsub().await.unwrap();
 
         pubsub.subscribe("swap_created").await.unwrap();
