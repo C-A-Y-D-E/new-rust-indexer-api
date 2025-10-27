@@ -78,7 +78,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 "pool_created" => {
                     if let Ok(data) = serde_json::from_str::<DBPool>(&payload) {
-                        println!("data: {:?}", data);
+                        // println!("data: {:?}", data);
                         match on_new_pool_event(data, &clickhouse_clone).await {
                             Ok(pulse_data) => {
                                 let _ = io_clone.emit("new-pair", &pulse_data).await;

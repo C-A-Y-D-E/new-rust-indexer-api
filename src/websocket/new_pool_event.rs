@@ -169,16 +169,17 @@ migration AS (
   GROUP BY r.creator
 ),
 vol_24h AS (
-  SELECT s.pool_address,
-         SUM(s.buy_volume + s.sell_volume) AS volume_sol,
-         CAST(SUM(s.buy_count) AS Int64) AS num_buys,
-         CAST(SUM(s.sell_count) AS Int64) AS num_sells,
-         CAST(SUM(s.buy_count + s.sell_count) AS Int64) AS num_txns
-  FROM pool_report_5m s
-  JOIN pools_with_curve r ON r.pool_address = s.pool_address
-  WHERE  s.bucket_start >= now() - INTERVAL 1 HOUR
-    AND s.bucket_start < now() - INTERVAL 5 MINUTE
-  GROUP BY s.pool_address
+  SELECT 
+    pool_address,
+    SUM(CASE WHEN swap_type = 'BUY' THEN quote_amount ELSE 0 END) + 
+    SUM(CASE WHEN swap_type = 'SELL' THEN quote_amount ELSE 0 END) AS volume_sol,
+    CAST(COUNT(CASE WHEN swap_type = 'BUY' THEN 1 END) AS Int64) AS num_buys,
+    CAST(COUNT(CASE WHEN swap_type = 'SELL' THEN 1 END) AS Int64) AS num_sells,
+    CAST(COUNT(*) AS Int64) AS num_txns
+  FROM swaps
+  WHERE pool_address IN (SELECT pool_address FROM pools_with_curve)
+    AND created_at >= now() - INTERVAL 1 HOUR
+  GROUP BY pool_address
 )
 SELECT
   r.pool_address AS pool_address,
@@ -202,14 +203,14 @@ SELECT
   t.scale_factor AS scale_factor,
   coalesce(ls.latest_quote_reserve, r.initial_token_quote_reserve) AS liquidity_sol,
   coalesce(ls.latest_base_reserve, r.initial_token_base_reserve) AS liquidity_token,
-  coalesce(ls.latest_price_sol, 0) AS current_price_sol,
+  ls.latest_price_sol AS current_price_sol,
   coalesce(h.num_holders, 0) AS num_holders,
   coalesce(th.top10_amount_raw, 0) AS top10_amount_raw,
   coalesce(d.dev_amount_raw, 0) AS dev_amount_raw,
   coalesce(sh.snipers_amount_raw, 0) AS snipers_amount_raw,
   coalesce(m.migration_count, 0) AS migration_count,
   coalesce(v.volume_sol, 0) AS volume_sol,
-  coalesce(v.num_txns, 0) AS num_txns,
+  v.num_txns AS num_txns,
   coalesce(v.num_buys, 0) AS num_buys,
   coalesce(v.num_sells, 0) AS num_sells,
   nullIf(df.source, '') AS funding_wallet_address,
@@ -218,9 +219,9 @@ SELECT
   nullIf(df.hash, '') AS transfer_hash,
   if(df.source = '', NULL, df.created_at) AS funded_at
 FROM pools_with_curve r
-LEFT JOIN vol_24h v ON v.pool_address = r.pool_address
-LEFT JOIN tok t ON t.mint_address = r.token_base_address
-LEFT JOIN latest_swap ls ON ls.pool_address = r.pool_address
+JOIN vol_24h v ON v.pool_address = r.pool_address
+JOIN tok t ON t.mint_address = r.token_base_address
+JOIN latest_swap ls ON ls.pool_address = r.pool_address
 LEFT JOIN holders_base h ON h.pool_address = r.pool_address
 LEFT JOIN top10_holders th ON th.pool_address = r.pool_address
 LEFT JOIN dev_hold d ON d.pool_address = r.pool_address
