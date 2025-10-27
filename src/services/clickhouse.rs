@@ -26,7 +26,7 @@ use crate::models::token::{DBToken, Token};
 use crate::models::transfer::{DbTransferSol, TransferSol};
 use crate::routes::pool_report::ReportType;
 use crate::types::token_info::{TokenInfo, TokenInfoRow};
-use crate::utils::{Decimal18, calculate_percentage};
+use crate::utils::{Decimal18, calculate_percentage_f64};
 
 #[derive(Clone)]
 pub struct ClickhouseService {
@@ -835,26 +835,26 @@ LEFT JOIN tok tk ON 1=1
             .ok_or_else(|| clickhouse::error::Error::Custom("No token info found".into()))?;
 
         // Calculate scale factor in Rust: 10^decimals
-        let scale_factor = row.decimals as f64;
+        let scale_factor = 10f64.powi(row.decimals as i32);
 
         let token_info = TokenInfo {
-            bundlers_hold_percent: calculate_percentage(
+            bundlers_hold_percent: calculate_percentage_f64(
                 row.bundlers_amount_raw,
                 scale_factor,
                 row.token_supply,
             ),
-            dev_holds_percent: calculate_percentage(
+            dev_holds_percent: calculate_percentage_f64(
                 row.dev_amount_raw,
                 scale_factor,
                 row.token_supply,
             ),
             num_holders: row.num_holders as i64,
-            snipers_hold_percent: calculate_percentage(
+            snipers_hold_percent: calculate_percentage_f64(
                 row.snipers_amount_raw,
                 scale_factor,
                 row.token_supply,
             ),
-            top10_holders_percent: calculate_percentage(
+            top10_holders_percent: calculate_percentage_f64(
                 row.top10_amount_raw,
                 scale_factor,
                 row.token_supply,
