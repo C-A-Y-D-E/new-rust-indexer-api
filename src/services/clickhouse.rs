@@ -141,7 +141,7 @@ impl ClickhouseService {
                 i.decimals as decimals,
                 COALESCE(m.uri, '') as uri,
                 COALESCE(a.mint_authority, i.mint_authority) as mint_authority,
-                COALESCE(s.total_supply, 0) / pow(10, i.decimals) as supply,
+                COALESCE(s.total_supply, 0) as supply,
                 COALESCE(a.freeze_authority, i.freeze_authority) as freeze_authority,
                 i.slot as slot,
                 m.image as image,
@@ -787,7 +787,7 @@ tok AS (
     SELECT
         i.mint_address,
         i.decimals,
-        COALESCE(s.total_supply, 0) / pow(10, i.decimals) AS token_supply
+        COALESCE(s.total_supply, 0) AS token_supply
     FROM token_initialize_events i
     LEFT JOIN (
         SELECT mint_address, sum(total_raw_supply) as total_supply 
@@ -835,30 +835,22 @@ LEFT JOIN tok tk ON 1=1
             .ok_or_else(|| clickhouse::error::Error::Custom("No token info found".into()))?;
 
         // Calculate scale factor in Rust: 10^decimals
-        let scale_factor = row.decimals as f64;
+        let scale_factor = 10.0_f64.powi(row.decimals as i32);
+
+        let bundlers_decimal_adjusted = row.bundlers_amount_raw / scale_factor;
+        let dev_decimal_adjusted = row.dev_amount_raw / scale_factor;
+        let snipers_decimal_adjusted = row.snipers_amount_raw / scale_factor;
+        let top10_decimal_adjusted = row.top10_amount_raw / scale_factor;
 
         let token_info = TokenInfo {
             bundlers_hold_percent: calculate_percentage(
-                row.bundlers_amount_raw,
-                scale_factor,
+                bundlers_decimal_adjusted,
                 row.token_supply,
             ),
-            dev_holds_percent: calculate_percentage(
-                row.dev_amount_raw,
-                scale_factor,
-                row.token_supply,
-            ),
+            dev_holds_percent: calculate_percentage(dev_decimal_adjusted, row.token_supply),
             num_holders: row.num_holders as i64,
-            snipers_hold_percent: calculate_percentage(
-                row.snipers_amount_raw,
-                scale_factor,
-                row.token_supply,
-            ),
-            top10_holders_percent: calculate_percentage(
-                row.top10_amount_raw,
-                scale_factor,
-                row.token_supply,
-            ),
+            snipers_hold_percent: calculate_percentage(snipers_decimal_adjusted, row.token_supply),
+            top10_holders_percent: calculate_percentage(top10_decimal_adjusted, row.token_supply),
         };
 
         Ok(token_info)

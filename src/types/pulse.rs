@@ -1,9 +1,7 @@
 use chrono::{DateTime, Utc};
-use rust_decimal::Decimal;
+
 use serde::{Deserialize, Serialize};
 use sqlx::prelude::FromRow;
-
-use crate::utils::Decimal18;
 
 // {
 //     "pairAddress": "9Ck8DLv2Us3M6R5CVXNt1yS4mYqKA5GnDRnhiWJgcSmu",
@@ -72,19 +70,19 @@ pub struct PulseDataResponse {
     pub twitter: Option<String>,
     pub telegram: Option<String>,
     // pub discord: Option<String>,
-    pub top10_holders_percent: Decimal18,
-    pub dev_holds_percent: Decimal18,
-    pub snipers_holds_percent: Decimal18,
+    pub top10_holders_percent: f64,
+    pub dev_holds_percent: f64,
+    pub snipers_holds_percent: f64,
     // pub insiders_hold_percent: f64,
     // pub bundlers_hold_percent: f64,
-    pub volume_sol: Decimal18,
-    pub market_cap_sol: Decimal18,
+    pub volume_sol: f64,
+    pub market_cap_sol: f64,
 
     // pub fees_sol: f64,
-    pub liquidity_sol: Decimal18,
-    pub liquidity_token: Decimal18,
-    pub bonding_curve_percent: Decimal18,
-    pub supply: Decimal18,
+    pub liquidity_sol: f64,
+    pub liquidity_token: f64,
+    pub bonding_curve_percent: f32,
+    pub supply: f64,
     pub num_txns: i64,
     pub num_buys: i64,
     pub num_sells: i64,
@@ -104,7 +102,7 @@ pub struct PulseDataResponse {
 pub struct DevWalletFunding {
     pub funding_wallet_address: String,
     pub wallet_address: String,
-    pub amount_sol: Decimal,
+    pub amount_sol: f64,
     pub hash: String,
     pub funded_at: DateTime<Utc>,
 }

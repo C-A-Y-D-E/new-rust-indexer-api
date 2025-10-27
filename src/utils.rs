@@ -20,11 +20,14 @@ pub type Decimal18 = FixedPoint<i128, U18>; // Decimal(38, 18) = Decimal18(18)
 //         Decimal18::from_bits(s)
 //     }
 // }
-pub fn calculate_percentage(amount: f64, scale_factor: f64, token_supply: f64) -> f64 {
-    if scale_factor == 0.0 || token_supply == 0.0 {
+pub fn calculate_market_cap(price_sol: f64, token_supply: f64) -> f64 {
+    price_sol * token_supply
+}
+
+// f64 variant for places that still operate on floating-point values
+pub fn calculate_percentage(amount: f64, token_supply: f64) -> f64 {
+    if token_supply == 0.0 {
         return 0.0;
     }
-
-    let percentage = amount * scale_factor / token_supply;
-    percentage
+    ((amount) / token_supply) * 100.0
 }
