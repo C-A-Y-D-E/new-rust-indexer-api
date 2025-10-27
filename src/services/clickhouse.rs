@@ -835,7 +835,7 @@ LEFT JOIN tok tk ON 1=1
             .ok_or_else(|| clickhouse::error::Error::Custom("No token info found".into()))?;
 
         // Calculate scale factor in Rust: 10^decimals
-        let scale_factor = row.decimals as f64;
+        let scale_factor = 10f64.powi(row.decimals as i32);
 
         let token_info = TokenInfo {
             bundlers_hold_percent: calculate_percentage(
