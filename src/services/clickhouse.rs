@@ -26,7 +26,7 @@ use crate::models::token::{DBToken, Token};
 use crate::models::transfer::{DbTransferSol, TransferSol};
 use crate::routes::pool_report::ReportType;
 use crate::types::token_info::{TokenInfo, TokenInfoRow};
-use crate::utils::{Decimal18, calculate_percentage_f64};
+use crate::utils::{Decimal18, calculate_percentage};
 
 #[derive(Clone)]
 pub struct ClickhouseService {
@@ -838,23 +838,23 @@ LEFT JOIN tok tk ON 1=1
         let scale_factor = 10f64.powi(row.decimals as i32);
 
         let token_info = TokenInfo {
-            bundlers_hold_percent: calculate_percentage_f64(
+            bundlers_hold_percent: calculate_percentage(
                 row.bundlers_amount_raw,
                 scale_factor,
                 row.token_supply,
             ),
-            dev_holds_percent: calculate_percentage_f64(
+            dev_holds_percent: calculate_percentage(
                 row.dev_amount_raw,
                 scale_factor,
                 row.token_supply,
             ),
             num_holders: row.num_holders as i64,
-            snipers_hold_percent: calculate_percentage_f64(
+            snipers_hold_percent: calculate_percentage(
                 row.snipers_amount_raw,
                 scale_factor,
                 row.token_supply,
             ),
-            top10_holders_percent: calculate_percentage_f64(
+            top10_holders_percent: calculate_percentage(
                 row.top10_amount_raw,
                 scale_factor,
                 row.token_supply,

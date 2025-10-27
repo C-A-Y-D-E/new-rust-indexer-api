@@ -1507,23 +1507,23 @@ LIMIT 10
             let mut data = Vec::new();
             for pool in pools.into_iter() {
                 let top10_holders_percent = calculate_percentage(
-                    Decimal18::from_bits(pool.top10_amount_raw as i128),
-                    Decimal18::from_bits(pool.scale_factor as i128),
-                    Decimal18::from_bits(*pool.token_supply.as_bits()),
+                    pool.top10_amount_raw as f64,
+                    pool.scale_factor as f64,
+                    pool.token_supply.to_string().parse::<f64>().unwrap_or(0.0),
                 );
                 let dev_holds_percent = calculate_percentage(
-                    Decimal18::from_bits(pool.dev_amount_raw as i128),
-                    Decimal18::from_bits(pool.scale_factor as i128),
-                    Decimal18::from_bits(*pool.token_supply.as_bits()),
+                    pool.dev_amount_raw as f64,
+                    pool.scale_factor as f64,
+                    pool.token_supply.to_string().parse::<f64>().unwrap_or(0.0),
                 );
                 let snipers_holds_percent = calculate_percentage(
-                    Decimal18::from_bits(*pool.snipers_amount_raw.as_bits()),
-                    Decimal18::from_bits(pool.scale_factor as i128),
-                    Decimal18::from_bits(*pool.token_supply.as_bits()),
+                    pool.snipers_amount_raw.to_string().parse::<f64>().unwrap_or(0.0),
+                    pool.scale_factor as f64,
+                    pool.token_supply.to_string().parse::<f64>().unwrap_or(0.0),
                 );
                 let market_cap_sol = calculate_market_cap(
-                    Decimal18::from_bits(*pool.current_price_sol.as_bits()),
-                    Decimal18::from_bits(*pool.token_supply.as_bits()),
+                    pool.current_price_sol.to_string().parse::<f64>().unwrap_or(0.0),
+                    pool.token_supply.to_string().parse::<f64>().unwrap_or(0.0),
                 );
                 let pulse_data: PulseDataResponse = PulseDataResponse {
                     pair_address: pool.pool_address,
