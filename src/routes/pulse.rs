@@ -1,7 +1,7 @@
 use axum::{Json, extract::State, http::StatusCode};
 use chrono::{DateTime, Utc};
 use clickhouse::Row;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tracing::info;
 
@@ -16,60 +16,60 @@ use crate::{
 
 // ClickHouse result row structure
 #[allow(dead_code)]
-#[derive(Debug, Deserialize, Row)]
-struct PulseRow {
-    pool_address: String,
-    creator: String,
-    token_base_address: String,
-    token_quote_address: String,
-    factory: String,
+#[derive(Debug, Serialize, Deserialize, Row)]
+pub struct PulseRow {
+    pub pool_address: String,
+    pub creator: String,
+    pub token_base_address: String,
+    pub token_quote_address: String,
+    pub factory: String,
     #[serde(with = "clickhouse::serde::chrono::datetime")]
-    created_at: DateTime<Utc>,
-    initial_token_base_reserve: f64,
-    initial_token_quote_reserve: f64,
-    bonding_curve_percent: f32,
+    pub created_at: DateTime<Utc>,
+    pub initial_token_base_reserve: f64,
+    pub initial_token_quote_reserve: f64,
+    pub bonding_curve_percent: f32,
 
     // Token metadata
-    name: Option<String>,
-    symbol: Option<String>,
-    image: Option<String>,
-    decimals: i8,
-    website: Option<String>,
-    twitter: Option<String>,
-    telegram: Option<String>,
-    mint_address: String,
-    token_supply: f64,
-    scale_factor: f64,
+    pub name: Option<String>,
+    pub symbol: Option<String>,
+    pub image: Option<String>,
+    pub decimals: i8,
+    pub website: Option<String>,
+    pub twitter: Option<String>,
+    pub telegram: Option<String>,
+    pub mint_address: String,
+    pub token_supply: f64,
+    pub scale_factor: f64,
 
     // Liquidity/price
-    liquidity_sol: f64,
-    liquidity_token: f64,
-    current_price_sol: f64,
+    pub liquidity_sol: f64,
+    pub liquidity_token: f64,
+    pub current_price_sol: f64,
 
     // Holders
-    num_holders: u64,
+    pub num_holders: u64,
 
     // Raw amounts for calculations
-    top10_amount_raw: i64,
-    dev_amount_raw: i64,
-    snipers_amount_raw: f64,
+    pub top10_amount_raw: i64,
+    pub dev_amount_raw: i64,
+    pub snipers_amount_raw: f64,
 
     // Migrations
-    migration_count: u64,
+    pub migration_count: u64,
 
     // Volume metrics
-    volume_sol: f64,
-    num_txns: i64,
-    num_buys: i64,
-    num_sells: i64,
+    pub volume_sol: f64,
+    pub num_txns: i64,
+    pub num_buys: i64,
+    pub num_sells: i64,
 
     // Dev wallet funding
-    funding_wallet_address: Option<String>,
-    wallet_address: Option<String>,
-    amount_sol: Option<f64>,
-    transfer_hash: Option<String>,
+    pub funding_wallet_address: Option<String>,
+    pub wallet_address: Option<String>,
+    pub amount_sol: Option<f64>,
+    pub transfer_hash: Option<String>,
     #[serde(with = "clickhouse::serde::chrono::datetime::option")]
-    funded_at: Option<DateTime<Utc>>,
+    pub funded_at: Option<DateTime<Utc>>,
 }
 
 pub async fn pulse(

@@ -15,7 +15,7 @@ use crate::{
         search::search_pools, // search::search_pools,
     },
     services::{clickhouse::ClickhouseService, redis::subscribe_and_process},
-    websocket::on_connect,
+    websocket::{new_pool_event::on_new_pool_event, on_connect},
 };
 use axum::{
     Router,
@@ -52,6 +52,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let (layer, io) = SocketIo::new_layer();
     let io_clone = io.clone();
+    let clickhouse_clone = clickhouse.clone();
     tokio::spawn(async move {
         let redis_url =
             std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://localhost:6379/".to_string());
@@ -77,7 +78,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 "pool_created" => {
                     if let Ok(data) = serde_json::from_str::<DBPool>(&payload) {
-                        let _ = io_clone.emit("new-pair", &data).await;
+                        println!("data: {:?}", data);
+                        match on_new_pool_event(data, &clickhouse_clone).await {
+                            Ok(pulse_data) => {
+                                let _ = io_clone.emit("new-pair", &pulse_data).await;
+                            }
+                            Err(error) => {
+                                println!("Error: {:?}", error.to_string());
+                            }
+                        }
                     }
                 }
                 _ => {}
