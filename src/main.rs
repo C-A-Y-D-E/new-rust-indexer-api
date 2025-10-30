@@ -51,6 +51,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing::subscriber::set_global_default(FmtSubscriber::default())?;
 
     let (layer, io) = SocketIo::new_layer();
+    // Share DB to websocket module
+    websocket::store::set_clickhouse_service(clickhouse.clone());
     let io_clone = io.clone();
     let clickhouse_clone = clickhouse.clone();
     tokio::spawn(async move {
