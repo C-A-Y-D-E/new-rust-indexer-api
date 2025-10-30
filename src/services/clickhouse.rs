@@ -335,9 +335,10 @@ impl ClickhouseService {
   slot,
   created_at
     FROM swaps
-    WHERE pool_address = ?
+    PREWHERE pool_address = ?
     ORDER BY slot DESC, created_at DESC
     LIMIT 1
+    SETTINGS optimize_read_in_order = 1
         "#;
 
         match self
@@ -863,42 +864,45 @@ LEFT JOIN tok tk ON 1=1
     ) -> Result<Option<TopTrader>> {
         let query = r#"
         WITH pool_info AS (
-            SELECT token_base_address 
-            FROM pools 
+            SELECT token_base_address
+            FROM pools
             WHERE pool_address = ?
+        ),
+        first_swap AS (
+            SELECT min(slot) AS first_slot
+            FROM swaps
+            WHERE pool_address = ?
+              AND (swap_type = 'BUY' OR swap_type = 'SELL')
         )
         SELECT
             s.creator,
+            max(s.slot = fs.first_slot) AS is_sniper,
             coalesce(sumIf(s.base_amount, s.swap_type = 'BUY'), 0) AS base_bought,
-            coalesce(sumIf(s.quote_amount, s.swap_type = 'BUY'), 0) AS quote_bought,
             coalesce(sumIf(s.base_amount, s.swap_type = 'SELL'), 0) AS base_sold,
+            coalesce(sumIf(s.quote_amount, s.swap_type = 'BUY'), 0) AS quote_bought,
             coalesce(sumIf(s.quote_amount, s.swap_type = 'SELL'), 0) AS quote_sold,
-            coalesce(a.amount / pow(10, COALESCE(t.decimals, 0)), 0) AS holding_base_token,
-            coalesce(max(
-                s.slot = (SELECT min(slot) FROM swaps WHERE pool_address = ? AND (swap_type = 'BUY' OR swap_type = 'SELL'))
-            ), false) AS is_sniper
+            coalesce(anyOrNull(a.amount) / pow(10, COALESCE(anyOrNull(t.decimals), 0)), 0) AS holding_base_token
         FROM swaps s
         CROSS JOIN pool_info pi
-        LEFT JOIN (
-            SELECT owner, mint, amount 
-            FROM accounts FINAL 
-            WHERE amount > 0
-        ) a ON a.owner = ? AND a.mint = pi.token_base_address
+        CROSS JOIN first_swap fs
+        LEFT JOIN accounts a
+            ON a.owner = ?
+           AND a.mint = pi.token_base_address
+           AND a.amount > 0
         LEFT JOIN token_initialize_events t ON t.mint_address = pi.token_base_address
-        WHERE s.pool_address = ?
-            AND s.creator = ?
-            AND (s.swap_type = 'BUY' OR s.swap_type = 'SELL')
-        GROUP BY s.creator, a.amount, t.decimals
+        PREWHERE s.pool_address = ? AND s.creator = ?
+        WHERE s.swap_type IN ('BUY', 'SELL')
+        GROUP BY s.creator
         "#;
 
         let rows: Option<TopTrader> = self
             .client
             .query(query)
-            .bind(&pool_address) // For pool_info CTE
-            .bind(&pool_address) // For subquery min(slot)
-            .bind(&creator) // For accounts JOIN
-            .bind(&pool_address) // For main WHERE s.pool_address
-            .bind(&creator) // For main WHERE s.creator
+            .bind(&pool_address) // pool_info
+            .bind(&pool_address) // first_swap
+            .bind(&creator) // accounts join filter
+            .bind(&pool_address) // PREWHERE s.pool_address
+            .bind(&creator) // PREWHERE s.creator
             .fetch_optional()
             .await?;
 
