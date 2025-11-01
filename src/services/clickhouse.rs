@@ -258,21 +258,21 @@ impl ClickhouseService {
         // Instead of selecting directly from pool_report_24h (which contains SimpleAggregateFunction columns that Clickhouse Rust client may not parse directly),
         // select from an aggregation query using FINAL and materializedAggregate functions to cast to native decimals.
         let volume_query = r#"
-  SELECT
-      bucket_start,
-      pool_address,
-      sum(buy_volume) AS buy_volume,
-      sum(buy_count) AS buy_count,
-      sum(sell_volume) AS sell_volume, 
-      sum(sell_count) AS sell_count,
-      sum(unique_traders) AS unique_traders,
-      sum(unique_buyers) AS unique_buyers,
-      sum(unique_sellers) AS unique_sellers 
-    FROM pool_report_24h FINAL
-    WHERE pool_address = ?
-    GROUP BY pool_address, bucket_start
-    ORDER BY bucket_start DESC
-    LIMIT 1
+ SELECT
+    pool_address,
+    toStartOfDay(created_at) AS bucket_start,
+    sumIf(abs(quote_amount), swap_type = 'BUY') AS buy_volume,
+    countIf(swap_type = 'BUY') AS buy_count,
+    sumIf(abs(quote_amount), swap_type = 'SELL') AS sell_volume,
+    countIf(swap_type = 'SELL') AS sell_count,
+    uniq(creator) AS unique_traders,
+    uniqIf(creator, swap_type = 'BUY') AS unique_buyers,
+    uniqIf(creator, swap_type = 'SELL') AS unique_sellers
+FROM swaps
+WHERE pool_address = '35YzP1XaaJ2LsP6477QZ7CL4tpgEKNcRrmyTv4u6aqEq'
+GROUP BY
+    pool_address,
+    bucket_start
         "#;
 
         let volume_row: PoolReport = self
@@ -654,56 +654,117 @@ impl ClickhouseService {
         pool_address: String,
         report_type: ReportType,
     ) -> Result<Option<Vec<PoolReport>>> {
-        let table_suffix = match report_type {
-            ReportType::OneMinute => "1m",
-            ReportType::FiveMinutes => "5m",
-            ReportType::OneHour => "1h",
-            ReportType::SixHours => "6h",
-            ReportType::OneDay => "24h",
+        // Match projection patterns exactly
+        let (bucket_expression, table_query) = match report_type {
+            ReportType::OneMinute => (
+                "toStartOfMinute(created_at) AS bucket_start",
+                r#"
+                SELECT
+                    toStartOfMinute(created_at) AS bucket_start,
+                    pool_address,
+                    sumIf(abs(quote_amount), swap_type = 'BUY') AS buy_volume,
+                    countIf(swap_type = 'BUY') AS buy_count,
+                    sumIf(abs(quote_amount), swap_type = 'SELL') AS sell_volume,
+                    countIf(swap_type = 'SELL') AS sell_count,
+                    uniq(creator) AS unique_traders,
+                    uniqIf(creator, swap_type = 'BUY') AS unique_buyers,
+                    uniqIf(creator, swap_type = 'SELL') AS unique_sellers
+                FROM swaps
+                WHERE pool_address = ?
+                GROUP BY pool_address, bucket_start
+                ORDER BY bucket_start DESC
+                LIMIT 1000
+                "#,
+            ),
+            ReportType::FiveMinutes => (
+                "toStartOfInterval(created_at, toIntervalMinute(5)) AS bucket_start",
+                r#"
+                SELECT
+                    toStartOfInterval(created_at, toIntervalMinute(5)) AS bucket_start,
+                    pool_address,
+                    sumIf(abs(quote_amount), swap_type = 'BUY') AS buy_volume,
+                    countIf(swap_type = 'BUY') AS buy_count,
+                    sumIf(abs(quote_amount), swap_type = 'SELL') AS sell_volume,
+                    countIf(swap_type = 'SELL') AS sell_count,
+                    uniq(creator) AS unique_traders,
+                    uniqIf(creator, swap_type = 'BUY') AS unique_buyers,
+                    uniqIf(creator, swap_type = 'SELL') AS unique_sellers
+                FROM swaps
+                WHERE pool_address = ?
+                GROUP BY pool_address, bucket_start
+                ORDER BY bucket_start DESC
+                LIMIT 1000
+                "#,
+            ),
+            ReportType::OneHour => (
+                "toStartOfHour(created_at) AS bucket_start",
+                r#"
+                SELECT
+                    toStartOfHour(created_at) AS bucket_start,
+                    pool_address,
+                    sumIf(abs(quote_amount), swap_type = 'BUY') AS buy_volume,
+                    countIf(swap_type = 'BUY') AS buy_count,
+                    sumIf(abs(quote_amount), swap_type = 'SELL') AS sell_volume,
+                    countIf(swap_type = 'SELL') AS sell_count,
+                    uniq(creator) AS unique_traders,
+                    uniqIf(creator, swap_type = 'BUY') AS unique_buyers,
+                    uniqIf(creator, swap_type = 'SELL') AS unique_sellers
+                FROM swaps
+                WHERE pool_address = ?
+                GROUP BY pool_address, bucket_start
+                ORDER BY bucket_start DESC
+                LIMIT 1000
+                "#,
+            ),
+            ReportType::SixHours => (
+                "toStartOfInterval(created_at, toIntervalHour(6)) AS bucket_start",
+                r#"
+                SELECT
+                    toStartOfInterval(created_at, toIntervalHour(6)) AS bucket_start,
+                    pool_address,
+                    sumIf(abs(quote_amount), swap_type = 'BUY') AS buy_volume,
+                    countIf(swap_type = 'BUY') AS buy_count,
+                    sumIf(abs(quote_amount), swap_type = 'SELL') AS sell_volume,
+                    countIf(swap_type = 'SELL') AS sell_count,
+                    uniq(creator) AS unique_traders,
+                    uniqIf(creator, swap_type = 'BUY') AS unique_buyers,
+                    uniqIf(creator, swap_type = 'SELL') AS unique_sellers
+                FROM swaps
+                WHERE pool_address = ?
+                GROUP BY pool_address, bucket_start
+                ORDER BY bucket_start DESC
+                LIMIT 1000
+                "#,
+            ),
+            ReportType::OneDay => (
+                "toStartOfDay(created_at) AS bucket_start",
+                r#"
+                SELECT
+                    toStartOfDay(created_at) AS bucket_start,
+                    pool_address,
+                    sumIf(abs(quote_amount), swap_type = 'BUY') AS buy_volume,
+                    countIf(swap_type = 'BUY') AS buy_count,
+                    sumIf(abs(quote_amount), swap_type = 'SELL') AS sell_volume,
+                    countIf(swap_type = 'SELL') AS sell_count,
+                    uniq(creator) AS unique_traders,
+                    uniqIf(creator, swap_type = 'BUY') AS unique_buyers,
+                    uniqIf(creator, swap_type = 'SELL') AS unique_sellers
+                FROM swaps
+                WHERE pool_address = ?
+                GROUP BY pool_address, bucket_start
+                ORDER BY bucket_start DESC
+                LIMIT 1000
+                "#,
+            ),
         };
-
-        let query = format!(
-            r#"
-            SELECT
-                bucket_start,
-                pool_address,
-                buy_volume,
-                buy_count,
-                sell_volume, 
-                sell_count,
-                unique_traders,
-                unique_buyers,
-                unique_sellers 
-            FROM pool_report_{}
-            WHERE pool_address = ?
-            ORDER BY bucket_start DESC
-            LIMIT 1000
-            "#,
-            table_suffix
-        );
-        // let data = self
-        //     .client
-        //     .query(&query)
-        //     .bind(&pool_address)
-        //     .fetch_bytes("JSONEachRow")
-        //     .unwrap()
-        //     .lines();
-        // let data: Vec<PoolReport> = data
-        //     .map(|line| serde_json::from_str(&line).unwrap())
-        //     .collect();
-        // Ok(Some(data))
-        // // while let Some(line) = lines.next_line().await.unwrap() {
-        // //     let value: serde_json::Value = serde_json::de::from_str(&line).unwrap();
-        // //     println!("JSONEachRow value: {value}");
-        // // }
-        // // Ok(Some(data))
 
         let data: Vec<PoolReport> = self
             .client
-            .query(&query)
+            .query(table_query)
             .bind(&pool_address)
             .fetch_all()
             .await?;
+
         Ok(Some(data))
     }
 
