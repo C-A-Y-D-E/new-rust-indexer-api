@@ -6,15 +6,15 @@ use crate::{
         get_holders::get_holders,
         get_pair_info::get_pair_info,
         get_token_info::get_token_info,
-        get_top_traders::{self, get_top_traders},
-        get_trader_details::{self, get_trader_details},
+        get_top_traders::get_top_traders,
+        get_trader_details::get_trader_details,
         get_trades::get_trades,
         last_transaction::get_last_transaction,
         pool_report::get_pool_report,
         pulse::pulse,
         search::search_pools, // search::search_pools,
     },
-    services::{clickhouse::ClickhouseService, redis::subscribe_and_process},
+    services::clickhouse::ClickhouseService,
     websocket::{new_pool_event::on_new_pool_event, on_connect},
 };
 use axum::{
@@ -29,6 +29,7 @@ use tower::ServiceBuilder;
 use tower_http::cors::CorsLayer;
 use tracing::info;
 use tracing_subscriber::FmtSubscriber;
+use serde_json::json;
 mod defaults;
 mod models;
 mod routes;
@@ -76,6 +77,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         let _ = io_clone
                             .emit(format!("s:{}", data.pool_address), &data)
                             .await;
+                        // broadcast swap to pulse subscribers
+                        let _ = io_clone
+                            .emit(
+                                "update_pulse_v2",
+                                &json!({"channel":"swap","data": data}),
+                            )
+                            .await;
                     }
                 }
                 "pool_created" => {
@@ -84,6 +92,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         match on_new_pool_event(data, &clickhouse_clone).await {
                             Ok(pulse_data) => {
                                 let _ = io_clone.emit("new-pair", &pulse_data).await;
+                                // broadcast incremental pool update to pulse subscribers
+                                let _ = io_clone
+                                    .emit(
+                                        "update_pulse_v2",
+                                        &json!({
+                                            "channel":"update_pulse_v2",
+                                            "data": {"isSnapshot": false, "content": [pulse_data]}
+                                        }),
+                                    )
+                                    .await;
                             }
                             Err(error) => {
                                 println!("Error: {:?}", error.to_string());
