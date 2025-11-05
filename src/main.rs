@@ -152,7 +152,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let clickhouse_batch = clickhouse.clone();
     let updated_pools_batch = updated_pools.clone();
     tokio::spawn(async move {
-        let mut interval_timer = interval(Duration::from_secs(2));
+        let mut interval_timer = interval(Duration::from_millis(200));
         interval_timer.tick().await; // Skip first immediate tick
         
         loop {
