@@ -261,14 +261,13 @@ migration AS (
 ),
 vol_24h AS (
   SELECT s.pool_address,
-         SUM(s.buy_volume + s.sell_volume) AS volume_sol,
-         CAST(SUM(s.buy_count) AS Int64) AS num_buys,
-         CAST(SUM(s.sell_count) AS Int64) AS num_sells,
-         CAST(SUM(s.buy_count + s.sell_count) AS Int64) AS num_txns
-  FROM pool_report_5m s
+         SUM(s.quote_amount) AS volume_sol,
+         CAST(countIf(s.swap_type = 'BUY') AS Int64) AS num_buys,
+         CAST(countIf(s.swap_type = 'SELL') AS Int64) AS num_sells,
+         CAST(count(*) AS Int64) AS num_txns
+  FROM swaps s
   JOIN pools_with_curve r ON r.pool_address = s.pool_address
-  WHERE  s.bucket_start >= now() - INTERVAL 24 HOUR
-    AND s.bucket_start < now() - INTERVAL 5 MINUTE
+  WHERE s.created_at >= now() - INTERVAL 24 HOUR
   GROUP BY s.pool_address
 )
 SELECT
@@ -767,13 +766,13 @@ migration AS (
 
 vol_24h AS (
   SELECT s.pool_address,
-         SUM(s.buy_volume + s.sell_volume) AS volume_sol,
-         CAST(SUM(s.buy_count) AS Int64) AS num_buys,
-         CAST(SUM(s.sell_count) AS Int64) AS num_sells,
-         CAST(SUM(s.buy_count + s.sell_count) AS Int64) AS num_txns
-  FROM pool_report_5m s
+         SUM(s.quote_amount) AS volume_sol,
+         CAST(countIf(s.swap_type = 'BUY') AS Int64) AS num_buys,
+         CAST(countIf(s.swap_type = 'SELL') AS Int64) AS num_sells,
+         CAST(count(*) AS Int64) AS num_txns
+  FROM swaps s
   JOIN all_pools r ON r.pool_address = s.pool_address
-  WHERE  s.bucket_start < now() - INTERVAL 5 MINUTE
+  WHERE s.created_at >= now() - INTERVAL 24 HOUR
   GROUP BY s.pool_address
 )
 SELECT
@@ -1270,13 +1269,13 @@ migration AS (
 
 vol_24h AS (
   SELECT s.pool_address,
-         SUM(s.buy_volume + s.sell_volume) AS volume_sol,
-         CAST(SUM(s.buy_count) AS Int64) AS num_buys,
-         CAST(SUM(s.sell_count) AS Int64) AS num_sells,
-         CAST(SUM(s.buy_count + s.sell_count) AS Int64) AS num_txns
-  FROM pool_report_5m s
+         SUM(s.quote_amount) AS volume_sol,
+         CAST(countIf(s.swap_type = 'BUY') AS Int64) AS num_buys,
+         CAST(countIf(s.swap_type = 'SELL') AS Int64) AS num_sells,
+         CAST(count(*) AS Int64) AS num_txns
+  FROM swaps s
   JOIN all_pools r ON r.pool_address = s.pool_address
-  WHERE  s.bucket_start < now() - INTERVAL 5 MINUTE
+  WHERE s.created_at >= now() - INTERVAL 24 HOUR
   GROUP BY s.pool_address
 )
 SELECT
