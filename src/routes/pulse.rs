@@ -509,10 +509,10 @@ LEFT JOIN migration        m  ON m.creator       = r.creator
             }
 
             // Add WHERE clause if we have conditions
-            // if !where_conditions.is_empty() {
-            //     query.push_str(" WHERE ");
-            //     query.push_str(&where_conditions.join(" AND "));
-            // }
+            if !where_conditions.is_empty() {
+                query.push_str(" WHERE ");
+                query.push_str(&where_conditions.join(" AND "));
+            }
 
             // Close the CTE and add basic SELECT
             query.push_str(
