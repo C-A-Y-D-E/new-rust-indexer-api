@@ -88,7 +88,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 "pool_created" => {
                     if let Ok(data) = serde_json::from_str::<DBPool>(&payload) {
-                        // println!("data: {:?}", data);
+                        let start_time = std::time::Instant::now();
                         match on_new_pool_event(data, &clickhouse_clone).await {
                             Ok(pulse_data) => {
                                 let _ = io_clone.emit("new-pair", &pulse_data).await;
@@ -107,6 +107,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 println!("Error: {:?}", error.to_string());
                             }
                         }
+                        let elapsed = start_time.elapsed();
+                        println!("on_new_pool_event took: {:?}", elapsed);
                     }
                 }
                 _ => {}

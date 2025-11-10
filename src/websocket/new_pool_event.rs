@@ -21,7 +21,7 @@ pub async fn on_new_pool_event(
     db_pool: DBPool,
     db_service: &ClickhouseService,
 ) -> Result<(PulseDataResponse), Box<dyn Error + Send + Sync>> {
-    if db_pool.factory != "PumpFun" {
+    if db_pool.factory != "PumpFun" && db_pool.factory != "PumpSwap" {
         return Err("factory is not PumpFun".to_string().into());
     }
 

@@ -77,9 +77,7 @@ pub async fn pulse(
     Json(input): Json<PulseFilter>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let filters = input.filters;
-    println!("{:?}", filters);
     let table = input.table;
-    println!("{:?}", table);
     match table {
         PulseTable::NewPairs => {
             let mut query = String::new();
@@ -265,7 +263,7 @@ vol_24h AS (
          CAST(SUM(s.buy_count) AS Int64) AS num_buys,
          CAST(SUM(s.sell_count) AS Int64) AS num_sells,
          CAST(SUM(s.buy_count + s.sell_count) AS Int64) AS num_txns
-  FROM pool_report_5m s
+  FROM pool_stats_24h_mv s
   JOIN pools_with_curve r ON r.pool_address = s.pool_address
   WHERE  s.bucket_start >= now() - INTERVAL 24 HOUR
     AND s.bucket_start < now() - INTERVAL 5 MINUTE
