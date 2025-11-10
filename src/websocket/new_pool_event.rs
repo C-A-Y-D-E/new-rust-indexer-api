@@ -13,10 +13,17 @@ use crate::{
 pub async fn on_new_pool_event(
     db_pool: DBPool,
     db_service: &ClickhouseService,
+<<<<<<< HEAD
+) -> Result<(PulseDataResponse), Box<dyn Error + Send + Sync>> {
+    if db_pool.factory != "PumpFun" && db_pool.factory != "PumpSwap" {
+        return Err("factory is not PumpFun".to_string().into());
+    }
+=======
 ) -> Result<PulseDataResponse, Box<dyn Error + Send + Sync>> {
   if db_pool.factory != "PumpFun" && db_pool.factory != "PumpSwap" {
       return Err("factory is not PumpFun".to_string().into());
   }
+>>>>>>> 264312fb44e9cfcbc0a1e7cd1bb7342be5ffbce8
 
   // ✅ Fixed query with proper type casting
   let query = "

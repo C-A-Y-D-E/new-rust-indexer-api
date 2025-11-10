@@ -77,9 +77,7 @@ pub async fn pulse(
     Json(input): Json<PulseFilter>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let filters = input.filters;
-    println!("{:?}", filters);
     let table = input.table;
-    println!("{:?}", table);
     match table {
         PulseTable::NewPairs => {
             let mut query = String::new();
