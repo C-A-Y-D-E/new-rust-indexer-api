@@ -194,11 +194,11 @@ top10_holders AS (
     SELECT r.pool_address, a.amount,
            ROW_NUMBER() OVER (PARTITION BY r.pool_address ORDER BY a.amount DESC) AS rn
     FROM pools_with_curve r
-    JOIN accounts a
+    JOIN mint_holders a
       ON a.mint = r.token_base_address
-     AND a.owner <> r.pool_address
-     AND a.owner <> r.pool_base_address
-     AND a.owner <> r.pool_quote_address
+     AND a.account <> r.pool_address
+     AND a.account <> r.pool_base_address
+     AND a.account <> r.pool_quote_address
      AND a.updated_at >= now() - INTERVAL 24 HOUR
   ) x
   WHERE rn <= 10

@@ -120,45 +120,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 "pool_created" => {
                     if let Ok(data) = serde_json::from_str::<DBPool>(&payload) {
-<<<<<<< HEAD
-                        let start_time = std::time::Instant::now();
+                        // println!("data: {:?}", data);
                         match on_new_pool_event(data, &clickhouse_clone).await {
                             Ok(pulse_data) => {
                                 let _ = io_clone.emit("new-pair", &pulse_data).await;
-                                // broadcast incremental pool update to pulse subscribers
-                                let _ = io_clone
-                                    .emit(
-                                        "update_pulse_v2",
-                                        &json!({
-                                            "channel":"update_pulse_v2",
-                                            "data": {"isSnapshot": false, "content": [pulse_data]}
-                                        }),
-                                    )
-                                    .await;
-=======
-                        let now = Utc::now();
-                        let twenty_four_hours_ago = now - chrono::Duration::hours(24);
-                        
-                        // Only process pools created in last 24 hours (less than 24h old)
-                        if data.created_at >= twenty_four_hours_ago {
-                            // Emit immediate "new-pair" event for new pools
-                            match on_new_pool_event(data.clone(), &clickhouse_clone).await {
-                                Ok(pulse_data) => {
-                                    let _ = io_clone.emit("new-pair", &pulse_data).await;
-                                }
-                                Err(error) => {
-                                    println!("Error processing new pool: {:?}", error.to_string());
-                                }
->>>>>>> 264312fb44e9cfcbc0a1e7cd1bb7342be5ffbce8
                             }
-                            
-                            // Add pool to batch update queue
-                            if let Ok(mut pools) = updated_pools_clone.lock() {
-                                pools.insert(data.pool_address.clone());
+                            Err(error) => {
+                                println!("Error: {:?}", error.to_string());
                             }
                         }
-                        let elapsed = start_time.elapsed();
-                        println!("on_new_pool_event took: {:?}", elapsed);
                     }
                 }
                 _ => {}
