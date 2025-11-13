@@ -1,19 +1,12 @@
 use std::error::Error;
-use std::time::{Duration, Instant};
 
-use chrono::{DateTime, Utc};
-use rust_decimal::prelude::ToPrimitive;
-use rust_decimal::{Decimal, prelude::FromPrimitive};
-
-use serde_json::Value;
-use sqlx::{Row, postgres::PgNotification};
+use chrono::Utc;
 
 use crate::routes::pulse::PulseRow;
-use crate::services::clickhouse::{ClickhouseService, PoolAndTokenData};
+use crate::services::clickhouse::ClickhouseService;
 use crate::utils::{calculate_market_cap, calculate_percentage};
 use crate::{
     models::pool::DBPool,
-    services::db::{},
     types::pulse::{DevWalletFunding, PulseDataResponse},
 };
 
@@ -21,12 +14,12 @@ pub async fn on_new_pool_event(
     db_pool: DBPool,
     db_service: &ClickhouseService,
 ) -> Result<(PulseDataResponse), Box<dyn Error + Send + Sync>> {
-    if db_pool.factory != "PumpFun" {
+    if db_pool.factory != "PumpFun" && db_pool.factory != "PumpSwap" {
         return Err("factory is not PumpFun".to_string().into());
     }
 
-    // ✅ Fixed query with proper type casting
-    let query = "
+  // ✅ Fixed query with proper type casting
+  let query = "
 
 WITH all_pools AS (
   SELECT
@@ -203,14 +196,14 @@ SELECT
   t.scale_factor AS scale_factor,
   coalesce(ls.latest_quote_reserve, r.initial_token_quote_reserve) AS liquidity_sol,
   coalesce(ls.latest_base_reserve, r.initial_token_base_reserve) AS liquidity_token,
-  ls.latest_price_sol AS current_price_sol,
+  coalesce(ls.latest_price_sol, 0) AS current_price_sol,
   coalesce(h.num_holders, 0) AS num_holders,
   coalesce(th.top10_amount_raw, 0) AS top10_amount_raw,
   coalesce(d.dev_amount_raw, 0) AS dev_amount_raw,
   coalesce(sh.snipers_amount_raw, 0) AS snipers_amount_raw,
   coalesce(m.migration_count, 0) AS migration_count,
   coalesce(v.volume_sol, 0) AS volume_sol,
-  v.num_txns AS num_txns,
+  coalesce(v.num_txns, 0) AS num_txns,
   coalesce(v.num_buys, 0) AS num_buys,
   coalesce(v.num_sells, 0) AS num_sells,
   nullIf(df.source, '') AS funding_wallet_address,
@@ -219,9 +212,9 @@ SELECT
   nullIf(df.hash, '') AS transfer_hash,
   if(df.source = '', NULL, df.created_at) AS funded_at
 FROM pools_with_curve r
-JOIN vol_24h v ON v.pool_address = r.pool_address
+LEFT JOIN vol_24h v ON v.pool_address = r.pool_address
 JOIN tok t ON t.mint_address = r.token_base_address
-JOIN latest_swap ls ON ls.pool_address = r.pool_address
+LEFT JOIN latest_swap ls ON ls.pool_address = r.pool_address
 LEFT JOIN holders_base h ON h.pool_address = r.pool_address
 LEFT JOIN top10_holders th ON th.pool_address = r.pool_address
 LEFT JOIN dev_hold d ON d.pool_address = r.pool_address
@@ -231,76 +224,62 @@ LEFT JOIN migration m ON m.creator = r.creator
   ";
 
    
-  let timeout = Duration::from_secs(2);
-  let start = Instant::now();
-      loop {
-        if start.elapsed() >= timeout {
-          return Err("Query timeout: No data found within 2 seconds".into());
-      }
-        let pool = db_service
+    let pool = db_service
         .client
         .query(query)
         .bind(&db_pool.pool_address)
         .fetch_one::<PulseRow>()
-        .await;
-       match pool {
-        Ok(pool) => {
-          let top10_decimal_adjusted = (pool.top10_amount_raw as f64) / pool.scale_factor;
-          let top10_holders_percent =
-              calculate_percentage(top10_decimal_adjusted, pool.token_supply);
-          let dev_decimal_adjusted = (pool.dev_amount_raw as f64) / pool.scale_factor;
-          let dev_holds_percent =
-              calculate_percentage(dev_decimal_adjusted, pool.token_supply);
-          let snipers_holds_percent =
-              calculate_percentage(pool.snipers_amount_raw, pool.token_supply);
-          let market_cap_sol =
-              calculate_market_cap(pool.current_price_sol, pool.token_supply);
-  
-          let pulse_data: PulseDataResponse = PulseDataResponse {
-              pair_address: pool.pool_address,
-              liquidity_sol: pool.liquidity_sol,
-              liquidity_token: pool.liquidity_token,
-              token_address: pool.mint_address,
-              bonding_curve_percent: pool.bonding_curve_percent,
-              token_name: pool.name,
-              token_symbol: pool.symbol,
-              token_decimals: pool.decimals as u8,
-              creator: pool.creator,
-              protocol: pool.factory,
-              website: pool.website,
-              twitter: pool.twitter,
-              telegram: pool.telegram,
-              top10_holders_percent,
-              dev_holds_percent,
-              snipers_holds_percent,
-              volume_sol: pool.volume_sol,
-              market_cap_sol,
-              created_at: pool.created_at,
-              migration_count: pool.migration_count as i64,
-              num_txns: pool.num_txns,
-              num_buys: pool.num_buys,
-              num_sells: pool.num_sells,
-              num_holders: pool.num_holders as i64,
-              supply: pool.token_supply,
-              token_image: pool.image,
-              dev_wallet_funding: if let Some(funding_wallet) = pool.funding_wallet_address {
-                  Some(DevWalletFunding {
-                      funding_wallet_address: funding_wallet,
-                      wallet_address: pool.wallet_address.unwrap_or_default(),
-                      amount_sol: pool.amount_sol.unwrap_or_default(),
-                      hash: pool.transfer_hash.unwrap_or_default(),
-                      funded_at: pool.funded_at.unwrap_or(Utc::now()),
-                  })
-              } else {
-                  None
-              },
-          };
-          return Ok(pulse_data);
-        }
-        Err(e) => {
-          tokio::time::sleep(Duration::from_millis(50)).await;
-        }
-      }
-    }
+        .await?;
+    
+    let top10_decimal_adjusted = (pool.top10_amount_raw as f64) / pool.scale_factor;
+    let top10_holders_percent =
+        calculate_percentage(top10_decimal_adjusted, pool.token_supply);
+    let dev_decimal_adjusted = (pool.dev_amount_raw as f64) / pool.scale_factor;
+    let dev_holds_percent =
+        calculate_percentage(dev_decimal_adjusted, pool.token_supply);
+    let snipers_holds_percent =
+        calculate_percentage(pool.snipers_amount_raw, pool.token_supply);
+    let market_cap_sol =
+        calculate_market_cap(pool.current_price_sol, pool.token_supply);
 
+    let pulse_data: PulseDataResponse = PulseDataResponse {
+        pair_address: pool.pool_address,
+        liquidity_sol: pool.liquidity_sol,
+        liquidity_token: pool.liquidity_token,
+        token_address: pool.mint_address,
+        bonding_curve_percent: pool.bonding_curve_percent,
+        token_name: pool.name,
+        token_symbol: pool.symbol,
+        token_decimals: pool.decimals as u8,
+        creator: pool.creator,
+        protocol: pool.factory,
+        website: pool.website,
+        twitter: pool.twitter,
+        telegram: pool.telegram,
+        top10_holders_percent,
+        dev_holds_percent,
+        snipers_holds_percent,
+        volume_sol: pool.volume_sol,
+        market_cap_sol,
+        created_at: pool.created_at,
+        migration_count: pool.migration_count as i64,
+        num_txns: pool.num_txns,
+        num_buys: pool.num_buys,
+        num_sells: pool.num_sells,
+        num_holders: pool.num_holders as i64,
+        supply: pool.token_supply,
+        token_image: pool.image,
+        dev_wallet_funding: if let Some(funding_wallet) = pool.funding_wallet_address {
+            Some(DevWalletFunding {
+                funding_wallet_address: funding_wallet,
+                wallet_address: pool.wallet_address.unwrap_or_default(),
+                amount_sol: pool.amount_sol.unwrap_or_default(),
+                hash: pool.transfer_hash.unwrap_or_default(),
+                funded_at: pool.funded_at.unwrap_or(Utc::now()),
+            })
+        } else {
+            None
+        },
+    };
+    Ok(pulse_data)
 }

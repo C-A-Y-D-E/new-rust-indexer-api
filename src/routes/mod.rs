@@ -10,3 +10,4 @@ pub mod last_transaction;
 pub mod pool_report;
 pub mod pulse;
 pub mod search;
+pub mod portfolio;

@@ -35,6 +35,8 @@ tracing-subscriber = "0.3.19"
 socketioxide = "0.17.2"
 tower = "0.5.2"
 tower-http = { version = "0.6.6", features = ["cors"] }
+once_cell = "1.19.0"
+dashmap = "5.5.3"
 
 fixnum = { version = "0.9.3", features = [
     "serde",

@@ -77,9 +77,7 @@ pub async fn pulse(
     Json(input): Json<PulseFilter>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let filters = input.filters;
-    println!("{:?}", filters);
     let table = input.table;
-    println!("{:?}", table);
     match table {
         PulseTable::NewPairs => {
             let mut query = String::new();
@@ -196,11 +194,11 @@ top10_holders AS (
     SELECT r.pool_address, a.amount,
            ROW_NUMBER() OVER (PARTITION BY r.pool_address ORDER BY a.amount DESC) AS rn
     FROM pools_with_curve r
-    JOIN accounts a
+    JOIN mint_holders a
       ON a.mint = r.token_base_address
-     AND a.owner <> r.pool_address
-     AND a.owner <> r.pool_base_address
-     AND a.owner <> r.pool_quote_address
+     AND a.account <> r.pool_address
+     AND a.account <> r.pool_base_address
+     AND a.account <> r.pool_quote_address
      AND a.updated_at >= now() - INTERVAL 24 HOUR
   ) x
   WHERE rn <= 10
@@ -261,14 +259,13 @@ migration AS (
 ),
 vol_24h AS (
   SELECT s.pool_address,
-         SUM(s.buy_volume + s.sell_volume) AS volume_sol,
-         CAST(SUM(s.buy_count) AS Int64) AS num_buys,
-         CAST(SUM(s.sell_count) AS Int64) AS num_sells,
-         CAST(SUM(s.buy_count + s.sell_count) AS Int64) AS num_txns
-  FROM pool_report_5m s
+         SUM(s.quote_amount) AS volume_sol,
+         CAST(countIf(s.swap_type = 'BUY') AS Int64) AS num_buys,
+         CAST(countIf(s.swap_type = 'SELL') AS Int64) AS num_sells,
+         CAST(count(*) AS Int64) AS num_txns
+  FROM swaps s
   JOIN pools_with_curve r ON r.pool_address = s.pool_address
-  WHERE  s.bucket_start >= now() - INTERVAL 24 HOUR
-    AND s.bucket_start < now() - INTERVAL 5 MINUTE
+  WHERE s.created_at >= now() - INTERVAL 24 HOUR
   GROUP BY s.pool_address
 )
 SELECT
@@ -510,10 +507,10 @@ LEFT JOIN migration        m  ON m.creator       = r.creator
             }
 
             // Add WHERE clause if we have conditions
-            // if !where_conditions.is_empty() {
-            //     query.push_str(" WHERE ");
-            //     query.push_str(&where_conditions.join(" AND "));
-            // }
+            if !where_conditions.is_empty() {
+                query.push_str(" WHERE ");
+                query.push_str(&where_conditions.join(" AND "));
+            }
 
             // Close the CTE and add basic SELECT
             query.push_str(
@@ -767,13 +764,13 @@ migration AS (
 
 vol_24h AS (
   SELECT s.pool_address,
-         SUM(s.buy_volume + s.sell_volume) AS volume_sol,
-         CAST(SUM(s.buy_count) AS Int64) AS num_buys,
-         CAST(SUM(s.sell_count) AS Int64) AS num_sells,
-         CAST(SUM(s.buy_count + s.sell_count) AS Int64) AS num_txns
-  FROM pool_report_5m s
+         SUM(s.quote_amount) AS volume_sol,
+         CAST(countIf(s.swap_type = 'BUY') AS Int64) AS num_buys,
+         CAST(countIf(s.swap_type = 'SELL') AS Int64) AS num_sells,
+         CAST(count(*) AS Int64) AS num_txns
+  FROM swaps s
   JOIN all_pools r ON r.pool_address = s.pool_address
-  WHERE  s.bucket_start < now() - INTERVAL 5 MINUTE
+  WHERE s.created_at >= now() - INTERVAL 24 HOUR
   GROUP BY s.pool_address
 )
 SELECT
@@ -1270,13 +1267,13 @@ migration AS (
 
 vol_24h AS (
   SELECT s.pool_address,
-         SUM(s.buy_volume + s.sell_volume) AS volume_sol,
-         CAST(SUM(s.buy_count) AS Int64) AS num_buys,
-         CAST(SUM(s.sell_count) AS Int64) AS num_sells,
-         CAST(SUM(s.buy_count + s.sell_count) AS Int64) AS num_txns
-  FROM pool_report_5m s
+         SUM(s.quote_amount) AS volume_sol,
+         CAST(countIf(s.swap_type = 'BUY') AS Int64) AS num_buys,
+         CAST(countIf(s.swap_type = 'SELL') AS Int64) AS num_sells,
+         CAST(count(*) AS Int64) AS num_txns
+  FROM swaps s
   JOIN all_pools r ON r.pool_address = s.pool_address
-  WHERE  s.bucket_start < now() - INTERVAL 5 MINUTE
+  WHERE s.created_at >= now() - INTERVAL 24 HOUR
   GROUP BY s.pool_address
 )
 SELECT
