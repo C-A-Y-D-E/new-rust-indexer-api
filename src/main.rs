@@ -13,6 +13,7 @@ use crate::{
         pool_report::get_pool_report,
         pulse::pulse,
         search::search_pools, // search::search_pools,
+        portfolio::portfolio,
     },
     services::clickhouse::ClickhouseService,
     websocket::{new_pool_event::on_new_pool_event, on_connect},
@@ -242,6 +243,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/pulse", post(pulse))
         .route("/token-info/{pool_address}", get(get_token_info))
         .route("/trader-details", get(get_trader_details))
+        .route("/portfolio/{user_address}", get(portfolio))
         .with_state(clickhouse)
         .layer(
             // Cors layer
