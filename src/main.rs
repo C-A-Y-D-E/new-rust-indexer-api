@@ -1,5 +1,8 @@
 use crate::{
-    models::{pool::DBPool, swap::DBSwap},
+    models::{
+        pool::{DBPool, NewPool},
+        swap::DBSwap,
+    },
     routes::{
         // get_trades::get_trades,
         get_candlestick::get_candlestick,
@@ -77,7 +80,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
                 "pool_created" => {
-                    if let Ok(data) = serde_json::from_str::<DBPool>(&payload) {
+                    if let Ok(data) = serde_json::from_str::<NewPool>(&payload) {
                         // println!("data: {:?}", data);
                         match on_new_pool_event(data, &clickhouse_clone).await {
                             Ok(pulse_data) => {

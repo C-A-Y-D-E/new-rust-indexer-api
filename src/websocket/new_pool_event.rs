@@ -8,6 +8,7 @@ use rust_decimal::{Decimal, prelude::FromPrimitive};
 use serde_json::Value;
 use sqlx::{Row, postgres::PgNotification};
 
+use crate::models::pool::NewPool;
 use crate::routes::pulse::PulseRow;
 use crate::services::clickhouse::{ClickhouseService, PoolAndTokenData};
 use crate::utils::{calculate_market_cap, calculate_percentage};
@@ -18,7 +19,7 @@ use crate::{
 };
 
 pub async fn on_new_pool_event(
-    db_pool: DBPool,
+    db_pool: NewPool,
     db_service: &ClickhouseService,
 ) -> Result<(PulseDataResponse), Box<dyn Error + Send + Sync>> {
     if db_pool.factory != "PumpFun" {
@@ -45,7 +46,7 @@ WITH all_pools AS (
     AND p.created_at >= now() - INTERVAL 1 HOUR
 ),
 pool_curve AS (
-  SELECT 
+  SELECT
     pool_address,
     argMax(curve_percentage, updated_at) as curve_percentage
   FROM pool_curve_updates FINAL
@@ -169,9 +170,9 @@ migration AS (
   GROUP BY r.creator
 ),
 vol_24h AS (
-  SELECT 
+  SELECT
     pool_address,
-    SUM(CASE WHEN swap_type = 'BUY' THEN quote_amount ELSE 0 END) + 
+    SUM(CASE WHEN swap_type = 'BUY' THEN quote_amount ELSE 0 END) +
     SUM(CASE WHEN swap_type = 'SELL' THEN quote_amount ELSE 0 END) AS volume_sol,
     CAST(COUNT(CASE WHEN swap_type = 'BUY' THEN 1 END) AS Int64) AS num_buys,
     CAST(COUNT(CASE WHEN swap_type = 'SELL' THEN 1 END) AS Int64) AS num_sells,
@@ -230,7 +231,7 @@ LEFT JOIN dev_wallet_funding df ON df.pool_address = r.pool_address
 LEFT JOIN migration m ON m.creator = r.creator
   ";
 
-   
+
   let timeout = Duration::from_secs(2);
   let start = Instant::now();
       loop {
@@ -255,7 +256,7 @@ LEFT JOIN migration m ON m.creator = r.creator
               calculate_percentage(pool.snipers_amount_raw, pool.token_supply);
           let market_cap_sol =
               calculate_market_cap(pool.current_price_sol, pool.token_supply);
-  
+
           let pulse_data: PulseDataResponse = PulseDataResponse {
               pair_address: pool.pool_address,
               liquidity_sol: pool.liquidity_sol,
